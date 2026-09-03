@@ -18,7 +18,8 @@ export type Screen =
   | "fallback-menu"
   | "fallback-chain"
   | "fallback-settings"
-  | "model-selector";
+  | "model-selector"
+  | "antigravity-models";
 
 export interface SelectOption {
   name: string;

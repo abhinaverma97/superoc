@@ -91,16 +91,9 @@ export async function handleMenuSelect(value: string): Promise<void> {
       setPreviewTheme(null);
       navigate("theme-selector");
       break;
-    case "sync-models": {
-      const res = await syncOpencodeModels(state.store.fallbackChains.antigravity);
-      if (res.success) {
-        setStatus(`Synced ${res.count} models to opencode.json`, theme.success);
-      } else {
-        setStatus(`Sync failed: ${res.error}`, theme.error);
-      }
-      navigate("list");
+    case "antigravity-models":
+      navigate("antigravity-models");
       break;
-    }
     case "export":
       navigate("export-path");
       break;
@@ -531,4 +524,38 @@ export function handleFallbackChainKey(keyName: string): void {
       break;
     }
   }
+}
+
+export async function handleRefreshAntigravityModels(): Promise<void> {
+  const theme = getActiveTheme();
+  setStatus("Querying Google Prod & Daily endpoints...", theme.primary);
+  callRenderApp();
+
+  const antigravityKey =
+    state.store.keys.find((k) => k.provider === "antigravity" && k.enabled)?.key ||
+    process.env.ANTIGRAVITY_API_KEY;
+
+  let accessToken: string | undefined;
+  let projectId: string | undefined;
+  if (antigravityKey) {
+    const auth = await getOrRefreshAntigravityAccessToken(antigravityKey);
+    accessToken = auth?.accessToken;
+    projectId = auth?.projectId;
+  }
+
+  try {
+    const liveModels = await fetchLiveAntigravityModels(accessToken, projectId);
+    const res = syncOpencodeModels(liveModels);
+    if (res.success) {
+      setStatus(`Refreshed ${res.count} models in OpenCode under Antigravity`, theme.success);
+    } else {
+      setStatus(`Sync failed: ${res.error}`, theme.error);
+    }
+  } catch (err) {
+    setStatus(
+      `Failed to refresh models: ${err instanceof Error ? err.message : String(err)}`,
+      theme.error,
+    );
+  }
+  callRenderApp();
 }

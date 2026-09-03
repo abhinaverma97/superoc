@@ -18,84 +18,84 @@ export function getOpencodeConfigPath(): string {
 }
 
 export const BASE_ANTIGRAVITY_MODELS: Record<string, any> = {
-  "antigravity-gemini-3.8-flash": {
-    name: "Gemini 3.8 Flash (Antigravity)",
+  "gemini-3.8-flash": {
+    name: "Gemini 3.8 Flash",
     limit: { context: 1048576, output: 65536 },
     modalities: DEFAULT_MODALITIES,
   },
-  "antigravity-gemini-3.8-flash-tiered": {
-    name: "Gemini 3.8 Flash Tiered (Antigravity)",
+  "gemini-3.8-flash-tiered": {
+    name: "Gemini 3.8 Flash Tiered",
     limit: { context: 1048576, output: 65536 },
     modalities: DEFAULT_MODALITIES,
   },
-  "antigravity-gemini-3.7-flash": {
-    name: "Gemini 3.7 Flash (Antigravity)",
+  "gemini-3.7-flash": {
+    name: "Gemini 3.7 Flash",
     limit: { context: 1048576, output: 65536 },
     modalities: DEFAULT_MODALITIES,
   },
-  "antigravity-gemini-3.7-flash-tiered": {
-    name: "Gemini 3.7 Flash Tiered (Antigravity)",
+  "gemini-3.7-flash-tiered": {
+    name: "Gemini 3.7 Flash Tiered",
     limit: { context: 1048576, output: 65536 },
     modalities: DEFAULT_MODALITIES,
   },
-  "antigravity-gemini-3.6-flash-high": {
-    name: "Gemini 3.6 Flash High (Antigravity)",
+  "gemini-3.6-flash-high": {
+    name: "Gemini 3.6 Flash High",
     limit: { context: 1048576, output: 65536 },
     modalities: DEFAULT_MODALITIES,
   },
-  "antigravity-gemini-3.6-flash-medium": {
-    name: "Gemini 3.6 Flash Medium (Antigravity)",
+  "gemini-3.6-flash-medium": {
+    name: "Gemini 3.6 Flash Medium",
     limit: { context: 1048576, output: 65536 },
     modalities: DEFAULT_MODALITIES,
   },
-  "antigravity-gemini-3.6-flash-low": {
-    name: "Gemini 3.6 Flash Low (Antigravity)",
+  "gemini-3.6-flash-low": {
+    name: "Gemini 3.6 Flash Low",
     limit: { context: 1048576, output: 65536 },
     modalities: DEFAULT_MODALITIES,
   },
-  "antigravity-gemini-pro-agent": {
-    name: "Gemini 3.1 Pro Agent (Antigravity)",
+  "gemini-pro-agent": {
+    name: "Gemini 3.1 Pro Agent",
     limit: { context: 1048576, output: 65535 },
     modalities: DEFAULT_MODALITIES,
   },
-  "antigravity-gemini-3.1-pro-low": {
-    name: "Gemini 3.1 Pro Low (Antigravity)",
+  "gemini-3.1-pro-low": {
+    name: "Gemini 3.1 Pro Low",
     limit: { context: 1048576, output: 65535 },
     modalities: DEFAULT_MODALITIES,
   },
-  "antigravity-gemini-3-flash-agent": {
-    name: "Gemini 3.5 Flash Agent (Antigravity)",
+  "gemini-3-flash-agent": {
+    name: "Gemini 3.5 Flash Agent",
     limit: { context: 1048576, output: 65536 },
     modalities: DEFAULT_MODALITIES,
   },
-  "antigravity-claude-sonnet-4-6": {
-    name: "Claude Sonnet 4.6 (Antigravity)",
+  "claude-sonnet-4-6": {
+    name: "Claude Sonnet 4.6",
     limit: { context: 200000, output: 64000 },
     modalities: DEFAULT_MODALITIES,
   },
-  "antigravity-claude-opus-4-6-thinking": {
-    name: "Claude Opus 4.6 Thinking (Antigravity)",
+  "claude-opus-4-6-thinking": {
+    name: "Claude Opus 4.6 Thinking",
     limit: { context: 200000, output: 64000 },
     modalities: DEFAULT_MODALITIES,
   },
-  "antigravity-gpt-oss-120b-medium": {
-    name: "GPT-OSS 120B Medium (Antigravity)",
+  "gpt-oss-120b-medium": {
+    name: "GPT-OSS 120B Medium",
     limit: { context: 131072, output: 32768 },
     modalities: DEFAULT_MODALITIES,
   },
-  "antigravity-gemini-2.5-pro": {
-    name: "Gemini 2.5 Pro (Antigravity)",
+  "gemini-2.5-pro": {
+    name: "Gemini 2.5 Pro",
     limit: { context: 1048576, output: 65536 },
     modalities: DEFAULT_MODALITIES,
   },
-  "antigravity-gemini-2.5-flash": {
-    name: "Gemini 2.5 Flash (Antigravity)",
+  "gemini-2.5-flash": {
+    name: "Gemini 2.5 Flash",
     limit: { context: 1048576, output: 65536 },
     modalities: DEFAULT_MODALITIES,
   },
 };
 
-export function syncOpencodeModels(customModels?: FallbackModel[]): {
+export function syncOpencodeModels(customModels?: Array<{ id: string; name: string }>): {
   success: boolean;
   configPath: string;
   count: number;
@@ -105,7 +105,7 @@ export function syncOpencodeModels(customModels?: FallbackModel[]): {
   try {
     let config: Record<string, any> = {
       $schema: "https://opencode.ai/config.json",
-      plugin: [],
+      plugin: ["superoc"],
       provider: {},
     };
 
@@ -120,9 +120,12 @@ export function syncOpencodeModels(customModels?: FallbackModel[]): {
     if (!config.plugin.includes("superoc")) {
       config.plugin.push("superoc");
     }
+    if (!config.provider || typeof config.provider !== "object") {
+      config.provider = {};
+    }
 
-    // Clean up any legacy antigravity models from opencode.json on disk
-    if (config.provider?.google?.models) {
+    // Clean up any legacy antigravity models from google provider
+    if (config.provider.google?.models) {
       for (const key of Object.keys(config.provider.google.models)) {
         if (key.startsWith("antigravity-")) {
           delete config.provider.google.models[key];
@@ -135,9 +138,29 @@ export function syncOpencodeModels(customModels?: FallbackModel[]): {
         delete config.provider.google;
       }
     }
-    if (config.provider && Object.keys(config.provider).length === 0) {
-      delete config.provider;
+
+    const modelsMap: Record<string, any> = { ...BASE_ANTIGRAVITY_MODELS };
+
+    if (customModels && Array.isArray(customModels)) {
+      for (const m of customModels) {
+        const cleanId = m.id.replace(/^antigravity-/, "");
+        if (!modelsMap[cleanId]) {
+          modelsMap[cleanId] = {
+            name: m.name,
+            limit: { context: 1048576, output: 65536 },
+            modalities: DEFAULT_MODALITIES,
+          };
+        }
+      }
     }
+
+    config.provider.antigravity = {
+      name: "Antigravity",
+      npm: "@ai-sdk/google",
+      api: "https://generativelanguage.googleapis.com",
+      apiKey: "antigravity-oauth",
+      models: modelsMap,
+    };
 
     const dir = dirname(configPath);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -146,7 +169,7 @@ export function syncOpencodeModels(customModels?: FallbackModel[]): {
     return {
       success: true,
       configPath,
-      count: Object.keys(BASE_ANTIGRAVITY_MODELS).length,
+      count: Object.keys(modelsMap).length,
     };
   } catch (err) {
     return {

@@ -29,11 +29,13 @@ import {
   buildFallbackSettings,
   buildModelSelector,
   getFilteredModelsForSelector,
+  buildAntigravityModelsScreen,
 } from "./screens.js";
 import {
   handleFallbackChainKey,
   addFallbackModel,
   cancelBenchmark,
+  handleRefreshAntigravityModels,
 } from "./actions.js";
 import { openUrlInBrowser } from "../antigravity.js";
 
@@ -70,7 +72,11 @@ export function initApp(): void {
       if (key.name === "2") {
         if (state.currentScreen === "provider-tabs") return;
         state.activeTab = "fallback";
-        navigateTo("fallback-menu");
+        if (state.activeProvider === "antigravity") {
+          navigateTo("antigravity-models");
+        } else {
+          navigateTo("fallback-menu");
+        }
         return;
       }
 
@@ -124,6 +130,8 @@ export function initApp(): void {
           case "model-selector":
             state.modelSearchQuery = "";
             return navigateTo("fallback-chain");
+          case "antigravity-models":
+            return navigateTo("list");
         }
       }
 
@@ -139,6 +147,25 @@ export function initApp(): void {
       if (state.currentScreen === "oauth-login") {
         if (key.name === "o" && state.pendingOAuthUrl) {
           openUrlInBrowser(state.pendingOAuthUrl);
+          return;
+        }
+      }
+
+      if (state.currentScreen === "antigravity-models") {
+        if (key.name === "up") {
+          state.modelSelectorIndex["antigravity"] = Math.max(
+            0,
+            (state.modelSelectorIndex["antigravity"] || 0) - 1,
+          );
+          callRenderApp();
+          return;
+        } else if (key.name === "down") {
+          state.modelSelectorIndex["antigravity"] =
+            (state.modelSelectorIndex["antigravity"] || 0) + 1;
+          callRenderApp();
+          return;
+        } else if (key.name === "r") {
+          handleRefreshAntigravityModels();
           return;
         }
       }
@@ -271,6 +298,8 @@ function doRenderApp(): void {
         return buildFallbackSettings();
       case "model-selector":
         return buildModelSelector();
+      case "antigravity-models":
+        return buildAntigravityModelsScreen();
     }
   })();
 

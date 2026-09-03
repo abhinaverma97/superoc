@@ -21,6 +21,7 @@ import {
   handleStartOAuthLogin,
 } from "./actions.js";
 import { exchangeAntigravity } from "../antigravity.js";
+import { BASE_ANTIGRAVITY_MODELS } from "../opencode-sync.js";
 
 function keyStatus(entry: { enabled: boolean }): string {
   return !entry.enabled ? "OFF" : "OK";
@@ -130,9 +131,9 @@ export function buildMainMenu(): ScreenContent {
       value: "add",
     },
     isAntigravity && {
-      name: "Sync Models to opencode.json",
-      description: "Auto-register all Antigravity models in opencode.json",
-      value: "sync-models",
+      name: "Models",
+      description: "View current Antigravity models & refresh from Google API",
+      value: "antigravity-models",
     },
     hasKeys && {
       name: "Reset Failures",
@@ -1068,5 +1069,77 @@ export function buildModelSelector(): ScreenContent {
       ...items,
     ),
     helpText: "[Esc] cancel  [Enter] select  [Type] search  [Backspace] clear  [r] refresh live",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Antigravity Models Screen
+// ---------------------------------------------------------------------------
+
+export function buildAntigravityModelsScreen(): ScreenContent {
+  const theme = getActiveTheme();
+  const models = Object.entries(BASE_ANTIGRAVITY_MODELS);
+  const listWidth = 64;
+  const viewportHeight = 14;
+
+  if (state.modelSelectorIndex["antigravity"] === undefined) {
+    state.modelSelectorIndex["antigravity"] = 0;
+  }
+  state.modelSelectorIndex["antigravity"] = clampIndex(
+    state.modelSelectorIndex["antigravity"],
+    models.length,
+  );
+
+  const currentIndex = state.modelSelectorIndex["antigravity"];
+  let scrollOffset = state.modelSelectorScrollOffset["antigravity"] || 0;
+  if (currentIndex < scrollOffset) {
+    scrollOffset = currentIndex;
+  } else if (currentIndex >= scrollOffset + viewportHeight) {
+    scrollOffset = currentIndex - viewportHeight + 1;
+  }
+  state.modelSelectorScrollOffset["antigravity"] = scrollOffset;
+
+  const visibleModels = models.slice(scrollOffset, scrollOffset + viewportHeight);
+
+  const rows = visibleModels.map(([id, def], idx) => {
+    const isSelected = scrollOffset + idx === currentIndex;
+    const nameWidth = 34;
+    const displayName =
+      def.name.length > nameWidth ? def.name.slice(0, nameWidth - 3) + "..." : def.name;
+    const idWidth = 26;
+    const displayId = id.length > idWidth ? id.slice(0, idWidth - 3) + "..." : id;
+
+    return Box(
+      {
+        flexDirection: "row",
+        paddingX: 1,
+        backgroundColor: isSelected ? theme.selectedBg : theme.backgroundPanel,
+        width: listWidth,
+      },
+      Text({
+        content: `${isSelected ? "▶ " : "  "}${displayName.padEnd(nameWidth)}`,
+        fg: isSelected ? theme.selectedText : theme.text,
+      }),
+      Text({
+        content: displayId,
+        fg: isSelected ? theme.selectedText : theme.textMuted,
+      }),
+    );
+  });
+
+  return {
+    element: Box(
+      { flexDirection: "column", gap: 0, width: listWidth },
+      Text({
+        content: ` Antigravity Models (${models.length} registered):`,
+        fg: theme.primary,
+      }),
+      Text({
+        content: `   ${"Model Name".padEnd(34)}${"OpenCode Model ID"}`,
+        fg: theme.textMuted,
+      }),
+      ...rows,
+    ),
+    helpText: "[Up/Down] navigate  [r] Refresh from Google API & OpenCode  [Esc] Back",
   };
 }

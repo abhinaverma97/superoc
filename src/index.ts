@@ -530,11 +530,19 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
   const hooks: Hooks = {
     config: async (cfg: any) => {
       if (!cfg.provider) cfg.provider = {};
-      if (!cfg.provider.google) cfg.provider.google = {};
-      if (!cfg.provider.google.models) cfg.provider.google.models = {};
+      if (!cfg.provider.antigravity) {
+        cfg.provider.antigravity = {
+          name: "Antigravity",
+          npm: "@ai-sdk/google",
+          api: "https://generativelanguage.googleapis.com",
+          apiKey: "antigravity-oauth",
+          models: {},
+        };
+      }
+      if (!cfg.provider.antigravity.models) cfg.provider.antigravity.models = {};
       for (const [id, def] of Object.entries(BASE_ANTIGRAVITY_MODELS)) {
-        if (!cfg.provider.google.models[id]) {
-          cfg.provider.google.models[id] = JSON.parse(JSON.stringify(def));
+        if (!cfg.provider.antigravity.models[id]) {
+          cfg.provider.antigravity.models[id] = JSON.parse(JSON.stringify(def));
         }
       }
     },
@@ -598,6 +606,7 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
 
               const isAntigravityModel =
                 rawModel.startsWith("antigravity-") ||
+                rawModel in BASE_ANTIGRAVITY_MODELS ||
                 /claude|gpt-oss|gemini-3|gemini-pro-agent/i.test(rawModel);
 
               reloadFromDisk();
