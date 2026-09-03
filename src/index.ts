@@ -27,7 +27,7 @@ import {
   getAntigravityHeaders,
   fetchLiveAntigravityModels,
 } from "./antigravity.js";
-import { BASE_ANTIGRAVITY_MODELS, syncOpencodeModels } from "./opencode-sync.js";
+import { BASE_ANTIGRAVITY_MODELS, syncOpencodeModels, syncOpencodeAuth } from "./opencode-sync.js";
 
 const PROVIDERS: ProviderId[] = ["nvidia", "google", "antigravity"];
 const NIM_BASE_URL = "https://integrate.api.nvidia.com";
@@ -526,6 +526,14 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
     },
   });
 }
+
+  if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY = "antigravity-oauth";
+  }
+  if (!process.env.GEMINI_API_KEY) {
+    process.env.GEMINI_API_KEY = "antigravity-oauth";
+  }
+  syncOpencodeAuth();
 
   const hooks: Hooks = {
     config: async (cfg: any) => {

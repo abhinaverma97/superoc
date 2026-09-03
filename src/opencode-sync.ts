@@ -166,6 +166,9 @@ export function syncOpencodeModels(customModels?: Array<{ id: string; name: stri
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", "utf-8");
 
+    // Automatically register credentials in OpenCode auth.json so @ai-sdk/google never throws missing key
+    syncOpencodeAuth();
+
     return {
       success: true,
       configPath,
@@ -179,4 +182,23 @@ export function syncOpencodeModels(customModels?: Array<{ id: string; name: stri
       error: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+export function syncOpencodeAuth(): void {
+  const localShare = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
+  const authPath = join(localShare, "opencode", "auth.json");
+  try {
+    const dir = dirname(authPath);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    let data: Record<string, any> = {};
+    if (existsSync(authPath)) {
+      try {
+        data = JSON.parse(readFileSync(authPath, "utf-8"));
+      } catch {}
+    }
+    if (!data.antigravity) {
+      data.antigravity = { type: "api", key: "antigravity-oauth" };
+      writeFileSync(authPath, JSON.stringify(data, null, 2) + "\n", "utf-8");
+    }
+  } catch {}
 }

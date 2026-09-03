@@ -171,6 +171,23 @@ async function install() {
     mode: 0o600,
   });
 
+  // Sync credentials in OpenCode auth.json
+  try {
+    const localShare = process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
+    const authPath = path.join(localShare, "opencode", "auth.json");
+    if (!fs.existsSync(path.dirname(authPath))) fs.mkdirSync(path.dirname(authPath), { recursive: true });
+    let authData = {};
+    if (fs.existsSync(authPath)) {
+      try {
+        authData = JSON.parse(fs.readFileSync(authPath, "utf-8"));
+      } catch {}
+    }
+    if (!authData.antigravity) {
+      authData.antigravity = { type: "api", key: "antigravity-oauth" };
+      fs.writeFileSync(authPath, JSON.stringify(authData, null, 2) + "\n", "utf-8");
+    }
+  } catch {}
+
   console.log("Updated OpenCode config with Antigravity provider & models");
   console.log("\nNext steps:");
   console.log("  1. Run: superoc  (to manage your API keys & accounts)");
