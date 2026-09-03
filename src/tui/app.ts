@@ -38,8 +38,15 @@ import {
   handleRefreshAntigravityModels,
 } from "./actions.js";
 import { openUrlInBrowser } from "../antigravity.js";
+import { syncOpencodeModels, syncOpencodeAuth } from "../opencode-sync.js";
 
 export function initApp(): void {
+  // Ensure opencode config and auth are in sync whenever superoc is launched
+  try {
+    syncOpencodeModels();
+    syncOpencodeAuth();
+  } catch {}
+
   setNavigate((screen: Screen) => {
     state.currentScreen = screen;
     renderApp();
