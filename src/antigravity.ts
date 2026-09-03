@@ -371,6 +371,9 @@ export async function fetchLiveAntigravityModels(
     `${ANTIGRAVITY_ENDPOINT_DAILY}/v1internal:fetchAvailableModels`,
   ];
 
+  const fetchedMap = new Map<string, { id: string; name: string }>();
+  let recommendedIds: string[] = [];
+
   for (const endpoint of endpoints) {
     try {
       const res = await fetch(endpoint, {
@@ -378,11 +381,12 @@ export async function fetchLiveAntigravityModels(
         headers: {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Antigravity/1.18.3 Chrome/138.0.7204.235 Electron/37.3.1 Safari/537.36",
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Antigravity/1.18.3 Chrome/138.0.7204.235 Electron/37.3.1 Safari/537.36",
           "X-Goog-Api-Client": "google-cloud-sdk vscode_cloudshelleditor/0.1",
           "Client-Metadata": `{"ideType":"ANTIGRAVITY","platform":"${process.platform === "win32" ? "WINDOWS" : "MACOS"}","pluginType":"GEMINI"}`,
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify(projectId ? { project: projectId } : {}),
         signal: AbortSignal.timeout(10000),
       });
 
@@ -393,36 +397,37 @@ export async function fetchLiveAntigravityModels(
           tieredModelIds?: Record<string, string[]>;
         };
 
-        if (data.models && typeof data.models === "object") {
-          const fetchedMap = new Map<string, { id: string; name: string }>();
+        if (data.agentModelSorts?.[0]?.groups?.[0]?.modelIds && recommendedIds.length === 0) {
+          recommendedIds = data.agentModelSorts[0].groups[0].modelIds;
+        }
 
-          // Add tiered models (like gemini-3.7-flash-tiered and gemini-3.7-flash)
-          if (data.tieredModelIds) {
-            for (const list of Object.values(data.tieredModelIds)) {
-              if (Array.isArray(list)) {
-                for (const tId of list) {
-                  if (tId && typeof tId === "string") {
-                    const formatted = tId
+        // Add tiered models (like gemini-3.8-flash-tiered and gemini-3.8-flash)
+        if (data.tieredModelIds) {
+          for (const list of Object.values(data.tieredModelIds)) {
+            if (Array.isArray(list)) {
+              for (const tId of list) {
+                if (tId && typeof tId === "string") {
+                  const formatted = tId
+                    .split("-")
+                    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+                    .join(" ");
+                  fetchedMap.set(tId, { id: tId, name: formatted });
+                  if (tId.endsWith("-tiered")) {
+                    const baseId = tId.replace(/-tiered$/, "");
+                    const baseFormatted = baseId
                       .split("-")
                       .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
                       .join(" ");
-                    fetchedMap.set(tId, { id: tId, name: formatted });
-                    if (tId.endsWith("-tiered")) {
-                      const baseId = tId.replace(/-tiered$/, "");
-                      const baseFormatted = baseId
-                        .split("-")
-                        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-                        .join(" ");
-                      fetchedMap.set(baseId, { id: baseId, name: baseFormatted });
-                    }
+                    fetchedMap.set(baseId, { id: baseId, name: baseFormatted });
                   }
                 }
               }
             }
           }
+        }
 
+        if (data.models && typeof data.models === "object") {
           for (const [modelId, info] of Object.entries(data.models)) {
-            // Filter out internal hidden test/tab models
             if (
               info.isInternal ||
               modelId.startsWith("chat_") ||
@@ -442,36 +447,46 @@ export async function fetchLiveAntigravityModels(
                     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
                     .join(" ");
 
-            fetchedMap.set(modelId, {
-              id: modelId,
-              name: cleanName,
-            });
-          }
-
-          // Order by recommended sort if present
-          const sortedList: Array<{ id: string; name: string }> = [];
-          const recommendedIds = data.agentModelSorts?.[0]?.groups?.[0]?.modelIds ?? [];
-
-          for (const recId of recommendedIds) {
-            const m = fetchedMap.get(recId);
-            if (m) {
-              sortedList.push(m);
-              fetchedMap.delete(recId);
+            if (!fetchedMap.has(modelId)) {
+              fetchedMap.set(modelId, {
+                id: modelId,
+                name: cleanName,
+              });
             }
-          }
 
-          for (const remaining of fetchedMap.values()) {
-            sortedList.push(remaining);
-          }
-
-          if (sortedList.length > 0) {
-            return sortedList;
+            if (modelId.endsWith("-tiered")) {
+              const baseId = modelId.replace(/-tiered$/, "");
+              if (!fetchedMap.has(baseId)) {
+                const baseClean = cleanName.replace(/\s*\(?Tiered\)?/i, "").trim();
+                fetchedMap.set(baseId, {
+                  id: baseId,
+                  name: baseClean || cleanName,
+                });
+              }
+            }
           }
         }
       }
     } catch (err) {
       console.debug("[superoc] fetchAvailableModels failed on", endpoint, err);
     }
+  }
+
+  if (fetchedMap.size > 0) {
+    const sortedList: Array<{ id: string; name: string }> = [];
+    for (const recId of recommendedIds) {
+      const m = fetchedMap.get(recId);
+      if (m) {
+        sortedList.push(m);
+        fetchedMap.delete(recId);
+      }
+    }
+
+    for (const remaining of fetchedMap.values()) {
+      sortedList.push(remaining);
+    }
+
+    return sortedList;
   }
 
   return defaultModels;

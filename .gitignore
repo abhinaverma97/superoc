@@ -6,3 +6,5 @@ dist/
 scratch/
 *.log
 antiusage/
+keys_backup.json
+*-keys.json

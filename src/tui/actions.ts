@@ -297,6 +297,10 @@ export function addFallbackModel(id: string, name: string): void {
   safeSaveStore();
   refreshStore();
   state.fallbackChainIndex[provider] = insertIndex;
+
+  if (provider === "antigravity") {
+    syncOpencodeModels(state.store.fallbackChains.antigravity);
+  }
 }
 
 export function cancelBenchmark(modelId?: string): void {
@@ -416,7 +420,8 @@ export function handleStartOAuthLogin(): void {
         safeSaveStore();
         refreshStore();
         await syncOpencodeModels(state.store.fallbackChains.antigravity);
-        setStatus(`Added Antigravity account "${name}" & synced models`, getActiveTheme().success);
+        fetchAntigravityModels().catch(() => {});
+        setStatus(`Added Antigravity account "${name}"`, getActiveTheme().success);
         state.pendingKeyName = "";
         state.pendingOAuthUrl = "";
         state.pendingOAuthState = "";
@@ -459,6 +464,9 @@ export function handleFallbackChainKey(keyName: string): void {
         chain.splice(state.fallbackChainIndex[provider], 1);
         safeSaveStore();
         refreshStore();
+        if (provider === "antigravity") {
+          syncOpencodeModels(state.store.fallbackChains.antigravity);
+        }
         if (state.fallbackChainIndex[provider] >= chain.length) {
           state.fallbackChainIndex[provider] = Math.max(0, chain.length - 1);
         }

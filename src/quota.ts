@@ -70,6 +70,8 @@ export function resolveQuotaModelKey(modelId: string): string {
   const clean = modelId.replace(/^antigravity-/, "").toLowerCase();
   if (clean.includes("claude")) return "claude-sonnet-4-6";
   if (clean.includes("gpt-oss")) return "gpt-oss-120b-medium";
+  if (clean.includes("3.8") || clean.includes("3-8")) return "gemini-3.8-flash-tiered";
+  if (clean.includes("3.7") || clean.includes("3-7")) return "gemini-3.7-flash";
   if (clean.includes("gemini-pro") || clean.includes("3.1-pro")) return "gemini-pro-agent";
   return "gemini-3.6-flash-high";
 }
@@ -214,6 +216,8 @@ export async function refreshAllModelQuotas(
   const activeKeyIds = activeKeys.map((k) => k.id).sort().join(",");
 
   const targetModels = [
+    "gemini-3.8-flash",
+    "gemini-3.8-flash-tiered",
     "claude-sonnet-4-6",
     "claude-opus-4-6-thinking",
     "gpt-oss-120b-medium",

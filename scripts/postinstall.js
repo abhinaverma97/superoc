@@ -17,6 +17,16 @@ const DEFAULT_MODALITIES = {
 };
 
 const BASE_ANTIGRAVITY_MODELS = {
+  "antigravity-gemini-3.8-flash": {
+    name: "Gemini 3.8 Flash (Antigravity)",
+    limit: { context: 1048576, output: 65536 },
+    modalities: DEFAULT_MODALITIES,
+  },
+  "antigravity-gemini-3.8-flash-tiered": {
+    name: "Gemini 3.8 Flash Tiered (Antigravity)",
+    limit: { context: 1048576, output: 65536 },
+    modalities: DEFAULT_MODALITIES,
+  },
   "antigravity-gemini-3.7-flash": {
     name: "Gemini 3.7 Flash (Antigravity)",
     limit: { context: 1048576, output: 65536 },

@@ -25,6 +25,7 @@ import {
   exchangeAntigravity,
   getOrRefreshAntigravityAccessToken,
   getAntigravityHeaders,
+  fetchLiveAntigravityModels,
 } from "./antigravity.js";
 import { BASE_ANTIGRAVITY_MODELS, syncOpencodeModels } from "./opencode-sync.js";
 
@@ -527,6 +528,16 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
 }
 
   const hooks: Hooks = {
+    config: async (cfg: any) => {
+      if (!cfg.provider) cfg.provider = {};
+      if (!cfg.provider.google) cfg.provider.google = {};
+      if (!cfg.provider.google.models) cfg.provider.google.models = {};
+      for (const [id, def] of Object.entries(BASE_ANTIGRAVITY_MODELS)) {
+        if (!cfg.provider.google.models[id]) {
+          cfg.provider.google.models[id] = JSON.parse(JSON.stringify(def));
+        }
+      }
+    },
     auth: {
       provider: "google",
       loader: async (_getAuth, providerContext) => {
@@ -541,6 +552,31 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
             if (!providerContext.models[id]) {
               providerContext.models[id] = JSON.parse(JSON.stringify(def));
             }
+          }
+
+          // Asynchronously query live models from both endpoints and register them in-memory
+          reloadFromDisk();
+          const activeKeys = getActiveKeys(store, "antigravity");
+          if (activeKeys.length > 0) {
+            getOrRefreshAntigravityAccessToken(activeKeys[0].key).then(async (auth) => {
+              if (auth) {
+                try {
+                  const liveModels = await fetchLiveAntigravityModels(auth.accessToken, auth.projectId);
+                  for (const m of liveModels) {
+                    const agId = m.id.startsWith("antigravity-") ? m.id : `antigravity-${m.id}`;
+                    if (providerContext.models && !providerContext.models[agId]) {
+                      (providerContext.models as Record<string, any>)[agId] = {
+                        name: `${m.name} (Antigravity)`,
+                        limit: { context: 1048576, output: 65536 },
+                        modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+                      };
+                    }
+                  }
+                } catch (e) {
+                  console.debug("[superoc] live model auto-injection failed:", e);
+                }
+              }
+            }).catch(() => {});
           }
         }
 
@@ -582,16 +618,15 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
                   }
 
                   const effectiveModel = rawModel.replace(/^antigravity-/, "");
+                  const candidateModels = [effectiveModel];
+                  if (!effectiveModel.endsWith("-tiered") && (effectiveModel.includes("flash") || effectiveModel.includes("pro"))) {
+                    candidateModels.push(`${effectiveModel}-tiered`);
+                  } else if (effectiveModel.endsWith("-tiered")) {
+                    candidateModels.push(effectiveModel.replace(/-tiered$/, ""));
+                  }
 
                   let bodyStr = init?.body;
                   let parsedBody = typeof bodyStr === "string" ? JSON.parse(bodyStr) : bodyStr;
-                  const wrappedBody = JSON.stringify({
-                    project: authRes.projectId || "rising-fact-p41fc",
-                    model: effectiveModel,
-                    request: parsedBody,
-                    requestType: "agent",
-                    userAgent: "antigravity",
-                  });
 
                   const headers = new Headers(init?.headers ?? {});
                   headers.set("Authorization", `Bearer ${authRes.accessToken}`);
@@ -615,23 +650,32 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
                   ];
 
                   let gotRes: Response | null = null;
-                  for (const ep of endpoints) {
-                    const transformedUrl = `${ep}/v1internal:${action}${isStreaming ? "?alt=sse" : ""}`;
-                    try {
-                      const r = await fetch(transformedUrl, {
-                        ...init,
-                        headers,
-                        body: wrappedBody,
+                  endpointLoop: for (const ep of endpoints) {
+                    for (const candidate of candidateModels) {
+                      const transformedUrl = `${ep}/v1internal:${action}${isStreaming ? "?alt=sse" : ""}`;
+                      const wrappedBody = JSON.stringify({
+                        project: authRes.projectId || "rising-fact-p41fc",
+                        model: candidate,
+                        request: parsedBody,
+                        requestType: "agent",
+                        userAgent: "antigravity",
                       });
-                      if (r.ok) {
-                        gotRes = r;
-                        break;
+                      try {
+                        const r = await fetch(transformedUrl, {
+                          ...init,
+                          headers,
+                          body: wrappedBody,
+                        });
+                        if (r.ok) {
+                          gotRes = r;
+                          break endpointLoop;
+                        }
+                        if (r.status === 429) {
+                          gotRes = r;
+                        }
+                      } catch (netErr) {
+                        console.warn(`[superoc] Endpoint ${ep} socket/network error:`, netErr);
                       }
-                      if (r.status === 429) {
-                        gotRes = r;
-                      }
-                    } catch (netErr) {
-                      console.warn(`[superoc] Endpoint ${ep} socket/network error:`, netErr);
                     }
                   }
 
