@@ -157,7 +157,7 @@ export function syncOpencodeModels(customModels?: Array<{ id: string; name: stri
     config.provider.antigravity = {
       name: "Antigravity",
       npm: "@ai-sdk/google",
-      api: "https://generativelanguage.googleapis.com",
+      api: "https://generativelanguage.googleapis.com/v1beta",
       apiKey: "antigravity-oauth",
       models: modelsMap,
     };

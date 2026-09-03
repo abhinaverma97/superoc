@@ -162,7 +162,7 @@ async function install() {
   config.provider.antigravity = {
     name: "Antigravity",
     npm: "@ai-sdk/google",
-    api: "https://generativelanguage.googleapis.com",
+    api: "https://generativelanguage.googleapis.com/v1beta",
     apiKey: "antigravity-oauth",
     models: BASE_ANTIGRAVITY_MODELS,
   };
@@ -170,6 +170,29 @@ async function install() {
   await writeFile(CONFIG_PATH, JSON.stringify(config, null, 2) + "\n", {
     mode: 0o600,
   });
+
+  // Ensure superoc package is registered in OpenCode's config directory so OpenCode loads the plugin
+  try {
+    const configDir = path.dirname(CONFIG_PATH);
+    const opencodePkgPath = path.join(configDir, "package.json");
+    let opencodePkg = {};
+    if (fs.existsSync(opencodePkgPath)) {
+      try {
+        opencodePkg = JSON.parse(fs.readFileSync(opencodePkgPath, "utf-8"));
+      } catch {}
+    }
+    opencodePkg.dependencies = opencodePkg.dependencies || {};
+    opencodePkg.dependencies.superoc = "^0.1.17";
+    fs.writeFileSync(opencodePkgPath, JSON.stringify(opencodePkg, null, 2) + "\n");
+
+    const targetModuleDir = path.join(configDir, "node_modules", "superoc");
+    const localDist = path.join(__dirname, "..", "dist");
+    if (fs.existsSync(localDist)) {
+      const targetDist = path.join(targetModuleDir, "dist");
+      fs.mkdirSync(targetDist, { recursive: true });
+      fs.cpSync(localDist, targetDist, { recursive: true });
+    }
+  } catch {}
 
   // Sync credentials in OpenCode auth.json
   try {

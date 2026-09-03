@@ -535,6 +535,164 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
   }
   syncOpencodeAuth();
 
+  const antigravityFetch = async (
+    input: string | URL | Request,
+    init?: RequestInit,
+    fallbackFetch: typeof fetch = fetch,
+  ): Promise<Response> => {
+    const urlString =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : (input as Request).url;
+
+    if (urlString.includes("generativelanguage.googleapis.com") || urlString.includes("antigravity")) {
+      const match = urlString.match(/\/models\/([^:]+):(\w+)/);
+      const rawModel = match ? match[1] : "";
+      const action = match ? match[2] : "streamGenerateContent";
+      const isStreaming = action === "streamGenerateContent" || urlString.includes("alt=sse");
+
+      const isAntigravityModel =
+        rawModel.startsWith("antigravity-") ||
+        rawModel in BASE_ANTIGRAVITY_MODELS ||
+        /claude|gpt-oss|gemini-3|gemini-pro-agent/i.test(rawModel);
+
+      reloadFromDisk();
+      const activeAntigravityKeys = getActiveKeys(store, "antigravity");
+
+      if (isAntigravityModel || activeAntigravityKeys.length > 0) {
+        let attempts = 0;
+        let lastResponse: Response | null = null;
+        const maxAttempts = Math.max(1, activeAntigravityKeys.length);
+        while (attempts < maxAttempts) {
+          attempts++;
+          const next = getNextKey(store, config, rawModel, "antigravity");
+          if (!next) break;
+
+          const authRes = await getOrRefreshAntigravityAccessToken(next.key.key);
+          if (!authRes) {
+            continue;
+          }
+
+          const effectiveModel = rawModel.replace(/^antigravity-/, "");
+          const candidateModels = [effectiveModel];
+          if (
+            !effectiveModel.endsWith("-tiered") &&
+            (effectiveModel.includes("flash") || effectiveModel.includes("pro"))
+          ) {
+            candidateModels.push(`${effectiveModel}-tiered`);
+          } else if (effectiveModel.endsWith("-tiered")) {
+            candidateModels.push(effectiveModel.replace(/-tiered$/, ""));
+          }
+
+          let bodyStr = init?.body;
+          let parsedBody = typeof bodyStr === "string" ? JSON.parse(bodyStr) : bodyStr;
+
+          const headers = new Headers(init?.headers ?? {});
+          headers.set("Authorization", `Bearer ${authRes.accessToken}`);
+          headers.set(
+            "User-Agent",
+            `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Antigravity/1.18.3 Chrome/138.0.7204.235 Electron/37.3.1 Safari/537.36`,
+          );
+          headers.set("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1");
+          headers.set(
+            "Client-Metadata",
+            `{"ideType":"ANTIGRAVITY","platform":"WINDOWS","pluginType":"GEMINI"}`,
+          );
+          headers.delete("x-goog-api-key");
+          headers.delete("x-api-key");
+          headers.delete("x-goog-user-project");
+          if (isStreaming) headers.set("Accept", "text/event-stream");
+
+          const endpoints = [
+            "https://cloudcode-pa.googleapis.com",
+            "https://daily-cloudcode-pa.sandbox.googleapis.com",
+          ];
+
+          let gotRes: Response | null = null;
+          endpointLoop: for (const ep of endpoints) {
+            for (const candidate of candidateModels) {
+              const transformedUrl = `${ep}/v1internal:${action}${isStreaming ? "?alt=sse" : ""}`;
+              const wrappedBody = JSON.stringify({
+                project: authRes.projectId || "rising-fact-p41fc",
+                model: candidate,
+                request: parsedBody,
+                requestType: "agent",
+                userAgent: "antigravity",
+              });
+              try {
+                const r = await fetch(transformedUrl, {
+                  ...init,
+                  headers,
+                  body: wrappedBody,
+                });
+                if (r.ok) {
+                  gotRes = r;
+                  break endpointLoop;
+                }
+                if (r.status === 429) {
+                  gotRes = r;
+                }
+              } catch (netErr) {
+                console.warn(`[superoc] Endpoint ${ep} socket/network error:`, netErr);
+              }
+            }
+          }
+
+          if (gotRes) {
+            lastResponse = gotRes;
+          }
+
+          if (gotRes && gotRes.ok) {
+            if (isStreaming && gotRes.body) {
+              const transformedStream = gotRes.body.pipeThrough(createSseUnwrapTransform());
+              return new Response(transformedStream, {
+                status: gotRes.status,
+                statusText: gotRes.statusText,
+                headers: gotRes.headers,
+              });
+            }
+            return gotRes;
+          }
+
+          if (gotRes && gotRes.status === 429) {
+            recordRateLimit(store, next.key.id);
+            recordModelRateLimit(store, next.key.id, rawModel);
+            safeSaveStore();
+            continue;
+          }
+
+          if (gotRes) return gotRes;
+        }
+
+        if (isAntigravityModel) {
+          if (lastResponse) return lastResponse;
+          return new Response(
+            JSON.stringify({
+              error: {
+                code: 429,
+                message: "All Antigravity accounts are currently rate limited or exhausted.",
+                status: "RESOURCE_EXHAUSTED",
+              },
+            }),
+            { status: 429, headers: { "Content-Type": "application/json" } },
+          );
+        }
+      }
+    }
+
+    return (fallbackFetch || fetch)(input as any, init);
+  };
+
+  if (!(globalThis as any).__superoc_fetch_installed) {
+    (globalThis as any).__superoc_fetch_installed = true;
+    const origFetch = globalThis.fetch;
+    (globalThis as any).fetch = async function (input: any, init?: any) {
+      return antigravityFetch(input, init, origFetch);
+    };
+  }
+
   const hooks: Hooks = {
     config: async (cfg: any) => {
       if (!cfg.provider) cfg.provider = {};
@@ -542,7 +700,7 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
         cfg.provider.antigravity = {
           name: "Antigravity",
           npm: "@ai-sdk/google",
-          api: "https://generativelanguage.googleapis.com",
+          api: "https://generativelanguage.googleapis.com/v1beta",
           apiKey: "antigravity-oauth",
           models: {},
         };
@@ -555,7 +713,7 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
       }
     },
     auth: {
-      provider: "google",
+      provider: "antigravity",
       loader: async (_getAuth, providerContext) => {
         if (providerContext) {
           activeProviderContextModels = providerContext.models;
@@ -574,171 +732,37 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
           reloadFromDisk();
           const activeKeys = getActiveKeys(store, "antigravity");
           if (activeKeys.length > 0) {
-            getOrRefreshAntigravityAccessToken(activeKeys[0].key).then(async (auth) => {
-              if (auth) {
-                try {
-                  const liveModels = await fetchLiveAntigravityModels(auth.accessToken, auth.projectId);
-                  for (const m of liveModels) {
-                    const agId = m.id.startsWith("antigravity-") ? m.id : `antigravity-${m.id}`;
-                    if (providerContext.models && !providerContext.models[agId]) {
-                      (providerContext.models as Record<string, any>)[agId] = {
-                        name: `${m.name} (Antigravity)`,
-                        limit: { context: 1048576, output: 65536 },
-                        modalities: { input: ["text", "image", "pdf"], output: ["text"] },
-                      };
+            getOrRefreshAntigravityAccessToken(activeKeys[0].key)
+              .then(async (auth) => {
+                if (auth) {
+                  try {
+                    const liveModels = await fetchLiveAntigravityModels(
+                      auth.accessToken,
+                      auth.projectId,
+                    );
+                    for (const m of liveModels) {
+                      const cleanId = m.id.replace(/^antigravity-/, "");
+                      if (providerContext.models && !providerContext.models[cleanId]) {
+                        (providerContext.models as Record<string, any>)[cleanId] = {
+                          name: m.name,
+                          limit: { context: 1048576, output: 65536 },
+                          modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+                        };
+                      }
                     }
+                  } catch (e) {
+                    console.debug("[superoc] live model auto-injection failed:", e);
                   }
-                } catch (e) {
-                  console.debug("[superoc] live model auto-injection failed:", e);
                 }
-              }
-            }).catch(() => {});
+              })
+              .catch(() => {});
           }
         }
 
         return {
-          apiKey: "",
+          apiKey: "antigravity-oauth",
           async fetch(input: string | URL | Request, init?: RequestInit) {
-            const urlString =
-              typeof input === "string"
-                ? input
-                : input instanceof URL
-                  ? input.toString()
-                  : (input as Request).url;
-
-            if (urlString.includes("generativelanguage.googleapis.com")) {
-              const match = urlString.match(/\/models\/([^:]+):(\w+)/);
-              const rawModel = match ? match[1] : "";
-              const action = match ? match[2] : "streamGenerateContent";
-              const isStreaming = action === "streamGenerateContent" || urlString.includes("alt=sse");
-
-              const isAntigravityModel =
-                rawModel.startsWith("antigravity-") ||
-                rawModel in BASE_ANTIGRAVITY_MODELS ||
-                /claude|gpt-oss|gemini-3|gemini-pro-agent/i.test(rawModel);
-
-              reloadFromDisk();
-              const activeAntigravityKeys = getActiveKeys(store, "antigravity");
-
-              if (isAntigravityModel || activeAntigravityKeys.length > 0) {
-                let attempts = 0;
-                let lastResponse: Response | null = null;
-                const maxAttempts = Math.max(1, activeAntigravityKeys.length);
-                while (attempts < maxAttempts) {
-                  attempts++;
-                  const next = getNextKey(store, config, rawModel, "antigravity");
-                  if (!next) break;
-
-                  const authRes = await getOrRefreshAntigravityAccessToken(next.key.key);
-                  if (!authRes) {
-                    continue;
-                  }
-
-                  const effectiveModel = rawModel.replace(/^antigravity-/, "");
-                  const candidateModels = [effectiveModel];
-                  if (!effectiveModel.endsWith("-tiered") && (effectiveModel.includes("flash") || effectiveModel.includes("pro"))) {
-                    candidateModels.push(`${effectiveModel}-tiered`);
-                  } else if (effectiveModel.endsWith("-tiered")) {
-                    candidateModels.push(effectiveModel.replace(/-tiered$/, ""));
-                  }
-
-                  let bodyStr = init?.body;
-                  let parsedBody = typeof bodyStr === "string" ? JSON.parse(bodyStr) : bodyStr;
-
-                  const headers = new Headers(init?.headers ?? {});
-                  headers.set("Authorization", `Bearer ${authRes.accessToken}`);
-                  headers.set(
-                    "User-Agent",
-                    `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Antigravity/1.18.3 Chrome/138.0.7204.235 Electron/37.3.1 Safari/537.36`,
-                  );
-                  headers.set("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1");
-                  headers.set(
-                    "Client-Metadata",
-                    `{"ideType":"ANTIGRAVITY","platform":"WINDOWS","pluginType":"GEMINI"}`,
-                  );
-                  headers.delete("x-goog-api-key");
-                  headers.delete("x-api-key");
-                  headers.delete("x-goog-user-project");
-                  if (isStreaming) headers.set("Accept", "text/event-stream");
-
-                  const endpoints = [
-                    "https://cloudcode-pa.googleapis.com",
-                    "https://daily-cloudcode-pa.sandbox.googleapis.com",
-                  ];
-
-                  let gotRes: Response | null = null;
-                  endpointLoop: for (const ep of endpoints) {
-                    for (const candidate of candidateModels) {
-                      const transformedUrl = `${ep}/v1internal:${action}${isStreaming ? "?alt=sse" : ""}`;
-                      const wrappedBody = JSON.stringify({
-                        project: authRes.projectId || "rising-fact-p41fc",
-                        model: candidate,
-                        request: parsedBody,
-                        requestType: "agent",
-                        userAgent: "antigravity",
-                      });
-                      try {
-                        const r = await fetch(transformedUrl, {
-                          ...init,
-                          headers,
-                          body: wrappedBody,
-                        });
-                        if (r.ok) {
-                          gotRes = r;
-                          break endpointLoop;
-                        }
-                        if (r.status === 429) {
-                          gotRes = r;
-                        }
-                      } catch (netErr) {
-                        console.warn(`[superoc] Endpoint ${ep} socket/network error:`, netErr);
-                      }
-                    }
-                  }
-
-                  if (gotRes) {
-                    lastResponse = gotRes;
-                  }
-
-                  if (gotRes && gotRes.ok) {
-                    if (isStreaming && gotRes.body) {
-                      const transformedStream = gotRes.body.pipeThrough(createSseUnwrapTransform());
-                      return new Response(transformedStream, {
-                        status: gotRes.status,
-                        statusText: gotRes.statusText,
-                        headers: gotRes.headers,
-                      });
-                    }
-                    return gotRes;
-                  }
-
-                  if (gotRes && gotRes.status === 429) {
-                    recordRateLimit(store, next.key.id);
-                    recordModelRateLimit(store, next.key.id, rawModel);
-                    safeSaveStore();
-                    continue;
-                  }
-
-                  if (gotRes) return gotRes;
-                }
-
-                if (isAntigravityModel) {
-                  if (lastResponse) return lastResponse;
-                  return new Response(
-                    JSON.stringify({
-                      error: {
-                        code: 429,
-                        message: "All Antigravity accounts are currently rate limited or exhausted.",
-                        status: "RESOURCE_EXHAUSTED",
-                      },
-                    }),
-                    { status: 429, headers: { "Content-Type": "application/json" } },
-                  );
-                }
-              }
-            }
-
-            return fetch(input as any, init);
+            return antigravityFetch(input, init, fetch);
           },
         };
       },
