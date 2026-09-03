@@ -117,34 +117,27 @@ export function syncOpencodeModels(customModels?: FallbackModel[]): {
     }
 
     if (!Array.isArray(config.plugin)) config.plugin = [];
-    if (!config.provider || typeof config.provider !== "object") config.provider = {};
-    
-    if (config.provider.antigravity) {
-      delete config.provider.antigravity;
+    if (!config.plugin.includes("superoc")) {
+      config.plugin.push("superoc");
     }
 
-    if (!config.provider.google || typeof config.provider.google !== "object") {
-      config.provider.google = {};
-    }
-    if (!config.provider.google.models || typeof config.provider.google.models !== "object") {
-      config.provider.google.models = {};
-    }
-
-    const baseModels: Record<string, any> = { ...BASE_ANTIGRAVITY_MODELS };
-
-    if (customModels && Array.isArray(customModels)) {
-      for (const m of customModels) {
-        if (!baseModels[m.id]) {
-          baseModels[m.id] = {
-            name: m.name,
-            limit: { context: 1048576, output: 65536 },
-            modalities: DEFAULT_MODALITIES,
-          };
+    // Clean up any legacy antigravity models from opencode.json on disk
+    if (config.provider?.google?.models) {
+      for (const key of Object.keys(config.provider.google.models)) {
+        if (key.startsWith("antigravity-")) {
+          delete config.provider.google.models[key];
         }
       }
+      if (Object.keys(config.provider.google.models).length === 0) {
+        delete config.provider.google.models;
+      }
+      if (Object.keys(config.provider.google).length === 0) {
+        delete config.provider.google;
+      }
     }
-
-    config.provider.google.models = baseModels;
+    if (config.provider && Object.keys(config.provider).length === 0) {
+      delete config.provider;
+    }
 
     const dir = dirname(configPath);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -153,7 +146,7 @@ export function syncOpencodeModels(customModels?: FallbackModel[]): {
     return {
       success: true,
       configPath,
-      count: Object.keys(baseModels).length,
+      count: Object.keys(BASE_ANTIGRAVITY_MODELS).length,
     };
   } catch (err) {
     return {

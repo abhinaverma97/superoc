@@ -140,28 +140,29 @@ async function install() {
     config.plugin.push("superoc");
   }
 
-  if (!config.provider || typeof config.provider !== "object") {
-    config.provider = {};
-  }
-  if (!config.provider.google || typeof config.provider.google !== "object") {
-    config.provider.google = {};
-  }
-  if (!config.provider.google.models || typeof config.provider.google.models !== "object") {
-    config.provider.google.models = {};
-  }
-
-  // Populate models
-  for (const [id, modelDef] of Object.entries(BASE_ANTIGRAVITY_MODELS)) {
-    if (!config.provider.google.models[id]) {
-      config.provider.google.models[id] = modelDef;
+  // Clean up any legacy antigravity models from opencode.json
+  if (config.provider?.google?.models) {
+    for (const key of Object.keys(config.provider.google.models)) {
+      if (key.startsWith("antigravity-")) {
+        delete config.provider.google.models[key];
+      }
     }
+    if (Object.keys(config.provider.google.models).length === 0) {
+      delete config.provider.google.models;
+    }
+    if (Object.keys(config.provider.google).length === 0) {
+      delete config.provider.google;
+    }
+  }
+  if (config.provider && Object.keys(config.provider).length === 0) {
+    delete config.provider;
   }
 
   await writeFile(CONFIG_PATH, JSON.stringify(config, null, 2) + "\n", {
     mode: 0o600,
   });
 
-  console.log("Updated OpenCode config with superoc plugin and Antigravity models");
+  console.log("Updated OpenCode config with superoc plugin (zero disk pollution)");
   console.log("\nNext steps:");
   console.log("  1. Run: superoc  (to manage your API keys & accounts)");
   console.log("  2. Connect your providers via the TUI");
