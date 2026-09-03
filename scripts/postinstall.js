@@ -181,8 +181,9 @@ async function install() {
         opencodePkg = JSON.parse(fs.readFileSync(opencodePkgPath, "utf-8"));
       } catch {}
     }
+    opencodePkg.type = "module";
     opencodePkg.dependencies = opencodePkg.dependencies || {};
-    opencodePkg.dependencies.superoc = "^0.1.17";
+    opencodePkg.dependencies.superoc = "^0.1.18";
     fs.writeFileSync(opencodePkgPath, JSON.stringify(opencodePkg, null, 2) + "\n");
 
     const targetModuleDir = path.join(configDir, "node_modules", "superoc");
@@ -192,6 +193,12 @@ async function install() {
       fs.mkdirSync(targetDist, { recursive: true });
       fs.cpSync(localDist, targetDist, { recursive: true });
     }
+
+    // Ensure plugin auto-discovery file exists in plugins/
+    const pluginsDir = path.join(configDir, "plugins");
+    const pluginFile = path.join(pluginsDir, "superoc.js");
+    if (!fs.existsSync(pluginsDir)) fs.mkdirSync(pluginsDir, { recursive: true });
+    fs.writeFileSync(pluginFile, `import plugin from "superoc";\nexport default plugin;\n`, "utf-8");
   } catch {}
 
   // Sync credentials in OpenCode auth.json

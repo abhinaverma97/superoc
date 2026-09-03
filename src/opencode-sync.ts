@@ -169,6 +169,9 @@ export function syncOpencodeModels(customModels?: Array<{ id: string; name: stri
     // Automatically register credentials in OpenCode auth.json so @ai-sdk/google never throws missing key
     syncOpencodeAuth();
 
+    // Ensure OpenCode auto-discovers the plugin in ~/.config/opencode/plugins/superoc.js
+    syncOpencodePluginFile();
+
     return {
       success: true,
       configPath,
@@ -200,5 +203,16 @@ export function syncOpencodeAuth(): void {
       data.antigravity = { type: "api", key: "antigravity-oauth" };
       writeFileSync(authPath, JSON.stringify(data, null, 2) + "\n", "utf-8");
     }
+  } catch {}
+}
+
+export function syncOpencodePluginFile(): void {
+  const xdgConfig = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+  const pluginsDir = join(xdgConfig, "opencode", "plugins");
+  const pluginFile = join(pluginsDir, "superoc.js");
+  try {
+    if (!existsSync(pluginsDir)) mkdirSync(pluginsDir, { recursive: true });
+    const content = `import plugin from "superoc";\nexport default plugin;\n`;
+    writeFileSync(pluginFile, content, "utf-8");
   } catch {}
 }
