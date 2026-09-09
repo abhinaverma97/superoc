@@ -34,6 +34,10 @@ const NIM_BASE_URL = "https://integrate.api.nvidia.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 const VALID_STRATEGIES = ["round-robin", "least-failures"] as const;
 
+if (!process.env.OPENCODE_ENABLE_EXA) {
+  process.env.OPENCODE_ENABLE_EXA = "1";
+}
+
 function isValidStrategy(val: unknown): val is KeyStoreConfig["rotationStrategy"] {
   return val === "round-robin" || val === "least-failures";
 }
@@ -695,6 +699,13 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
 
   const hooks: Hooks = {
     config: async (cfg: any) => {
+      if (!process.env.OPENCODE_ENABLE_EXA) {
+        process.env.OPENCODE_ENABLE_EXA = "1";
+      }
+      if (!cfg.permission) cfg.permission = {};
+      if (!cfg.permission.websearch) {
+        cfg.permission.websearch = "allow";
+      }
       if (!cfg.provider) cfg.provider = {};
       if (!cfg.provider.antigravity) {
         cfg.provider.antigravity = {
@@ -908,6 +919,7 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
       state.lastUserMessageID = output.message.id;
     },
     "shell.env": async (_input, output) => {
+      output.env["OPENCODE_ENABLE_EXA"] = "1";
       reloadFromDisk();
       for (const provider of PROVIDERS) {
         const envKeyName = getEnvKeyName(provider);

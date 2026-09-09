@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 
-import { join } from "path";
-import { homedir } from "os";
-import { existsSync } from "fs";
+import path, { join, dirname } from "path";
+import os, { homedir } from "os";
+import fs, { existsSync } from "fs";
 import { readFile, writeFile, mkdir } from "fs/promises";
+import { fileURLToPath } from "url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const xdgConfig = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
 const CONFIG_DIR = join(xdgConfig, "opencode");
@@ -158,6 +161,11 @@ async function install() {
     }
   }
 
+  config.permission = config.permission || {};
+  if (!config.permission.websearch) {
+    config.permission.websearch = "allow";
+  }
+
   config.provider = config.provider || {};
   config.provider.antigravity = {
     name: "Antigravity",
@@ -173,50 +181,64 @@ async function install() {
 
   // Ensure superoc package is registered in OpenCode's config directory so OpenCode loads the plugin
   try {
-    const configDir = path.dirname(CONFIG_PATH);
-    const opencodePkgPath = path.join(configDir, "package.json");
+    const configDir = dirname(CONFIG_PATH);
+    const opencodePkgPath = join(configDir, "package.json");
     let opencodePkg = {};
-    if (fs.existsSync(opencodePkgPath)) {
+    if (existsSync(opencodePkgPath)) {
       try {
-        opencodePkg = JSON.parse(fs.readFileSync(opencodePkgPath, "utf-8"));
+        opencodePkg = JSON.parse(await readFile(opencodePkgPath, "utf-8"));
       } catch {}
     }
     opencodePkg.type = "module";
     opencodePkg.dependencies = opencodePkg.dependencies || {};
-    opencodePkg.dependencies.superoc = "^0.1.18";
-    fs.writeFileSync(opencodePkgPath, JSON.stringify(opencodePkg, null, 2) + "\n");
 
-    const targetModuleDir = path.join(configDir, "node_modules", "superoc");
-    const localDist = path.join(__dirname, "..", "dist");
-    if (fs.existsSync(localDist)) {
-      const targetDist = path.join(targetModuleDir, "dist");
-      fs.mkdirSync(targetDist, { recursive: true });
+    let pkgVersion = "0.1.20";
+    try {
+      const selfPkg = JSON.parse(await readFile(join(__dirname, "..", "package.json"), "utf-8"));
+      if (selfPkg.version) pkgVersion = selfPkg.version;
+    } catch {}
+    opencodePkg.dependencies.superoc = `^${pkgVersion}`;
+    await writeFile(opencodePkgPath, JSON.stringify(opencodePkg, null, 2) + "\n");
+
+    const targetModuleDir = join(configDir, "node_modules", "superoc");
+    const localDist = join(__dirname, "..", "dist");
+    if (existsSync(localDist)) {
+      const targetDist = join(targetModuleDir, "dist");
+      await mkdir(targetDist, { recursive: true });
       fs.cpSync(localDist, targetDist, { recursive: true });
     }
 
     // Ensure plugin auto-discovery file exists in plugins/
-    const pluginsDir = path.join(configDir, "plugins");
-    const pluginFile = path.join(pluginsDir, "superoc.js");
-    if (!fs.existsSync(pluginsDir)) fs.mkdirSync(pluginsDir, { recursive: true });
-    fs.writeFileSync(pluginFile, `import plugin from "superoc";\nexport default plugin;\n`, "utf-8");
+    const pluginsDir = join(configDir, "plugins");
+    const pluginFile = join(pluginsDir, "superoc.js");
+    if (!existsSync(pluginsDir)) await mkdir(pluginsDir, { recursive: true });
+    await writeFile(pluginFile, `import plugin from "superoc";\nexport default plugin;\n`, "utf-8");
   } catch {}
 
   // Sync credentials in OpenCode auth.json
   try {
-    const localShare = process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
-    const authPath = path.join(localShare, "opencode", "auth.json");
-    if (!fs.existsSync(path.dirname(authPath))) fs.mkdirSync(path.dirname(authPath), { recursive: true });
+    const localShare = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
+    const authPath = join(localShare, "opencode", "auth.json");
+    if (!existsSync(dirname(authPath))) await mkdir(dirname(authPath), { recursive: true });
     let authData = {};
-    if (fs.existsSync(authPath)) {
+    if (existsSync(authPath)) {
       try {
-        authData = JSON.parse(fs.readFileSync(authPath, "utf-8"));
+        authData = JSON.parse(await readFile(authPath, "utf-8"));
       } catch {}
     }
     if (!authData.antigravity) {
       authData.antigravity = { type: "api", key: "antigravity-oauth" };
-      fs.writeFileSync(authPath, JSON.stringify(authData, null, 2) + "\n", "utf-8");
+      await writeFile(authPath, JSON.stringify(authData, null, 2) + "\n", "utf-8");
     }
   } catch {}
+
+  // Automatically ensure OPENCODE_ENABLE_EXA is enabled for Windows user
+  if (process.platform === "win32") {
+    try {
+      const { execSync } = await import("child_process");
+      execSync(`powershell -NoProfile -Command "[System.Environment]::SetEnvironmentVariable('OPENCODE_ENABLE_EXA', '1', 'User')"`, { stdio: "ignore" });
+    } catch {}
+  }
 
   console.log("Updated OpenCode config with Antigravity provider & models");
   console.log("\nNext steps:");

@@ -120,6 +120,12 @@ export function syncOpencodeModels(customModels?: Array<{ id: string; name: stri
     if (!config.plugin.includes("superoc")) {
       config.plugin.push("superoc");
     }
+    if (!config.permission || typeof config.permission !== "object") {
+      config.permission = {};
+    }
+    if (!config.permission.websearch) {
+      config.permission.websearch = "allow";
+    }
     if (!config.provider || typeof config.provider !== "object") {
       config.provider = {};
     }
