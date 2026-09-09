@@ -566,10 +566,16 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
       const activeAntigravityKeys = getActiveKeys(store, "antigravity");
 
       if (isAntigravityModel || activeAntigravityKeys.length > 0) {
+        if (init?.signal?.aborted) {
+          throw new DOMException("The operation was aborted.", "AbortError");
+        }
         let attempts = 0;
         let lastResponse: Response | null = null;
         const maxAttempts = Math.max(1, activeAntigravityKeys.length);
         while (attempts < maxAttempts) {
+          if (init?.signal?.aborted) {
+            throw new DOMException("The operation was aborted.", "AbortError");
+          }
           attempts++;
           const next = getNextKey(store, config, rawModel, "antigravity");
           if (!next) break;
@@ -577,6 +583,10 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
           const authRes = await getOrRefreshAntigravityAccessToken(next.key.key);
           if (!authRes) {
             continue;
+          }
+
+          if (init?.signal?.aborted) {
+            throw new DOMException("The operation was aborted.", "AbortError");
           }
 
           const effectiveModel = rawModel.replace(/^antigravity-/, "");
@@ -616,7 +626,13 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
 
           let gotRes: Response | null = null;
           endpointLoop: for (const ep of endpoints) {
+            if (init?.signal?.aborted) {
+              throw new DOMException("The operation was aborted.", "AbortError");
+            }
             for (const candidate of candidateModels) {
+              if (init?.signal?.aborted) {
+                throw new DOMException("The operation was aborted.", "AbortError");
+              }
               const transformedUrl = `${ep}/v1internal:${action}${isStreaming ? "?alt=sse" : ""}`;
               const wrappedBody = JSON.stringify({
                 project: authRes.projectId || "rising-fact-p41fc",
@@ -638,7 +654,10 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
                 if (r.status === 429) {
                   gotRes = r;
                 }
-              } catch (netErr) {
+              } catch (netErr: any) {
+                if (netErr?.name === "AbortError" || init?.signal?.aborted) {
+                  throw netErr;
+                }
                 console.warn(`[superoc] Endpoint ${ep} socket/network error:`, netErr);
               }
             }
