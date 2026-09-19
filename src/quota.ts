@@ -89,14 +89,8 @@ export async function fetchSingleAccountBatchQuotas(
     };
     const projectId = auth.projectId || "rising-fact-p41fc";
 
-    const [prodModelsRes, dailyModelsRes, quotaRes] = await Promise.all([
+    const [prodModelsRes, quotaRes] = await Promise.all([
       fetch("https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ project: projectId }),
-        signal: AbortSignal.timeout(5000),
-      }).catch(() => null),
-      fetch("https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels", {
         method: "POST",
         headers,
         body: JSON.stringify({ project: projectId }),
@@ -119,10 +113,6 @@ export async function fetchSingleAccountBatchQuotas(
     let availableModels: Record<string, any> = {};
     if (prodModelsRes && prodModelsRes.ok) {
       const data: any = await prodModelsRes.json().catch(() => null);
-      if (data?.models) Object.assign(availableModels, data.models);
-    }
-    if (dailyModelsRes && dailyModelsRes.ok) {
-      const data: any = await dailyModelsRes.json().catch(() => null);
       if (data?.models) Object.assign(availableModels, data.models);
     }
 

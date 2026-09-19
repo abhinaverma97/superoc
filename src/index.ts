@@ -619,10 +619,7 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
           headers.delete("x-goog-user-project");
           if (isStreaming) headers.set("Accept", "text/event-stream");
 
-          const endpoints = [
-            "https://cloudcode-pa.googleapis.com",
-            "https://daily-cloudcode-pa.sandbox.googleapis.com",
-          ];
+          const endpoints = ["https://cloudcode-pa.googleapis.com"];
 
           let gotRes: Response | null = null;
           endpointLoop: for (const ep of endpoints) {
@@ -658,7 +655,9 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
                 if (netErr?.name === "AbortError" || init?.signal?.aborted) {
                   throw netErr;
                 }
-                console.warn(`[superoc] Endpoint ${ep} socket/network error:`, netErr);
+                if (process.env.SUPEROC_DEBUG === "true") {
+                  console.warn(`[superoc] Endpoint ${ep} socket/network error:`, netErr);
+                }
               }
             }
           }
