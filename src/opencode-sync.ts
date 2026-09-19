@@ -70,12 +70,12 @@ export const BASE_ANTIGRAVITY_MODELS: Record<string, any> = {
   },
   "claude-sonnet-4-6": {
     name: "Claude Sonnet 4.6",
-    limit: { context: 200000, output: 64000 },
+    limit: { context: 1048576, output: 64000 },
     modalities: DEFAULT_MODALITIES,
   },
   "claude-opus-4-6-thinking": {
     name: "Claude Opus 4.6 Thinking",
-    limit: { context: 200000, output: 64000 },
+    limit: { context: 1048576, output: 128000 },
     modalities: DEFAULT_MODALITIES,
   },
   "gpt-oss-120b-medium": {
