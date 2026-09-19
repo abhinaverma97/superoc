@@ -617,9 +617,10 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
           headers.delete("x-goog-api-key");
           headers.delete("x-api-key");
           headers.delete("x-goog-user-project");
-          if (isStreaming) headers.set("Accept", "text/event-stream");
-
-          const endpoints = ["https://cloudcode-pa.googleapis.com"];
+          const endpoints = [
+            "https://daily-cloudcode-pa.sandbox.googleapis.com",
+            "https://cloudcode-pa.googleapis.com",
+          ];
 
           let gotRes: Response | null = null;
           endpointLoop: for (const ep of endpoints) {
