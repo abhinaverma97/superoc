@@ -207,6 +207,11 @@ async function install() {
       await mkdir(targetDist, { recursive: true });
       fs.cpSync(localDist, targetDist, { recursive: true });
     }
+    const localPkg = join(__dirname, "..", "package.json");
+    if (existsSync(localPkg)) {
+      await mkdir(targetModuleDir, { recursive: true });
+      fs.copyFileSync(localPkg, join(targetModuleDir, "package.json"));
+    }
 
     // Ensure plugin auto-discovery file exists in plugins/
     const pluginsDir = join(configDir, "plugins");
