@@ -19,80 +19,101 @@ const DEFAULT_MODALITIES = {
   output: ["text"],
 };
 
+const DEFAULT_CAPABILITIES = {
+  tools: true,
+  input: ["text", "image", "pdf"],
+  output: ["text"],
+};
+
 const BASE_ANTIGRAVITY_MODELS = {
   "gemini-3.8-flash": {
     name: "Gemini 3.8 Flash",
     limit: { context: 1048576, output: 65536 },
+    capabilities: DEFAULT_CAPABILITIES,
     modalities: DEFAULT_MODALITIES,
   },
   "gemini-3.8-flash-tiered": {
     name: "Gemini 3.8 Flash Tiered",
     limit: { context: 1048576, output: 65536 },
+    capabilities: DEFAULT_CAPABILITIES,
     modalities: DEFAULT_MODALITIES,
   },
   "gemini-3.7-flash": {
     name: "Gemini 3.7 Flash",
     limit: { context: 1048576, output: 65536 },
+    capabilities: DEFAULT_CAPABILITIES,
     modalities: DEFAULT_MODALITIES,
   },
   "gemini-3.7-flash-tiered": {
     name: "Gemini 3.7 Flash Tiered",
     limit: { context: 1048576, output: 65536 },
+    capabilities: DEFAULT_CAPABILITIES,
     modalities: DEFAULT_MODALITIES,
   },
   "gemini-3.6-flash-high": {
     name: "Gemini 3.6 Flash High",
     limit: { context: 1048576, output: 65536 },
+    capabilities: DEFAULT_CAPABILITIES,
     modalities: DEFAULT_MODALITIES,
   },
   "gemini-3.6-flash-medium": {
     name: "Gemini 3.6 Flash Medium",
     limit: { context: 1048576, output: 65536 },
+    capabilities: DEFAULT_CAPABILITIES,
     modalities: DEFAULT_MODALITIES,
   },
   "gemini-3.6-flash-low": {
     name: "Gemini 3.6 Flash Low",
     limit: { context: 1048576, output: 65536 },
+    capabilities: DEFAULT_CAPABILITIES,
     modalities: DEFAULT_MODALITIES,
   },
   "gemini-pro-agent": {
     name: "Gemini 3.1 Pro Agent",
     limit: { context: 1048576, output: 65535 },
+    capabilities: DEFAULT_CAPABILITIES,
     modalities: DEFAULT_MODALITIES,
   },
   "gemini-3.1-pro-low": {
     name: "Gemini 3.1 Pro Low",
     limit: { context: 1048576, output: 65535 },
+    capabilities: DEFAULT_CAPABILITIES,
     modalities: DEFAULT_MODALITIES,
   },
   "gemini-3-flash-agent": {
     name: "Gemini 3.5 Flash Agent",
     limit: { context: 1048576, output: 65536 },
+    capabilities: DEFAULT_CAPABILITIES,
     modalities: DEFAULT_MODALITIES,
   },
   "claude-sonnet-4-6": {
     name: "Claude Sonnet 4.6",
-    limit: { context: 200000, output: 64000 },
+    limit: { context: 1048576, output: 64000 },
+    capabilities: DEFAULT_CAPABILITIES,
     modalities: DEFAULT_MODALITIES,
   },
   "claude-opus-4-6-thinking": {
     name: "Claude Opus 4.6 Thinking",
-    limit: { context: 200000, output: 64000 },
+    limit: { context: 1048576, output: 128000 },
+    capabilities: DEFAULT_CAPABILITIES,
     modalities: DEFAULT_MODALITIES,
   },
   "gpt-oss-120b-medium": {
     name: "GPT-OSS 120B Medium",
     limit: { context: 131072, output: 32768 },
+    capabilities: DEFAULT_CAPABILITIES,
     modalities: DEFAULT_MODALITIES,
   },
   "gemini-2.5-pro": {
     name: "Gemini 2.5 Pro",
     limit: { context: 1048576, output: 65536 },
+    capabilities: DEFAULT_CAPABILITIES,
     modalities: DEFAULT_MODALITIES,
   },
   "gemini-2.5-flash": {
     name: "Gemini 2.5 Flash",
     limit: { context: 1048576, output: 65536 },
+    capabilities: DEFAULT_CAPABILITIES,
     modalities: DEFAULT_MODALITIES,
   },
 };
@@ -106,7 +127,9 @@ async function readConfig() {
   }
   return {
     $schema: "https://opencode.ai/config.json",
+    plugins: ["superoc"],
     plugin: ["superoc"],
+    providers: {},
     provider: {},
   };
 }
@@ -146,6 +169,14 @@ async function install() {
     config.plugin.push("superoc");
   }
 
+  // OpenCode v2 plugins array
+  if (!Array.isArray(config.plugins)) {
+    config.plugins = Array.isArray(config.plugin) ? [...config.plugin] : [];
+  }
+  if (!config.plugins.includes("superoc")) {
+    config.plugins.push("superoc");
+  }
+
   // Clean up any legacy antigravity models from google provider
   if (config.provider?.google?.models) {
     for (const key of Object.keys(config.provider.google.models)) {
@@ -160,12 +191,31 @@ async function install() {
       delete config.provider.google;
     }
   }
+  if (config.providers?.google?.models) {
+    for (const key of Object.keys(config.providers.google.models)) {
+      if (key.startsWith("antigravity-")) {
+        delete config.providers.google.models[key];
+      }
+    }
+  }
 
   config.permission = config.permission || {};
   if (!config.permission.websearch) {
     config.permission.websearch = "allow";
   }
 
+  // OpenCode v2 provider configuration
+  config.providers = config.providers || {};
+  config.providers.antigravity = {
+    name: "Antigravity",
+    package: "aisdk:@ai-sdk/google",
+    settings: {
+      baseURL: "https://generativelanguage.googleapis.com/v1beta",
+    },
+    models: BASE_ANTIGRAVITY_MODELS,
+  };
+
+  // OpenCode v1 provider configuration
   config.provider = config.provider || {};
   config.provider.antigravity = {
     name: "Antigravity",

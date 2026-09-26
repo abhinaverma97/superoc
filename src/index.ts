@@ -106,6 +106,239 @@ function findChainIndex(chain: FallbackModel[], model: { providerID: string; mod
   return chain.findIndex((entry) => entry.id === model.modelID);
 }
 
+function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let buffer = "";
+
+  return new TransformStream({
+    transform(chunk, controller) {
+      buffer += decoder.decode(chunk, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (line.startsWith("data:")) {
+          const jsonStr = line.slice(5).trim();
+          if (!jsonStr) {
+            controller.enqueue(encoder.encode(line + "\n"));
+            continue;
+          }
+          try {
+            const parsed = JSON.parse(jsonStr);
+            if (parsed.response !== undefined) {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(parsed.response)}\n`));
+              continue;
+            }
+          } catch {}
+        }
+        controller.enqueue(encoder.encode(line + "\n"));
+      }
+    },
+    flush(controller) {
+      if (buffer.length > 0) {
+        if (buffer.startsWith("data:")) {
+          const jsonStr = buffer.slice(5).trim();
+          try {
+            const parsed = JSON.parse(jsonStr);
+            if (parsed.response !== undefined) {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(parsed.response)}\n`));
+              return;
+            }
+          } catch {}
+        }
+        controller.enqueue(encoder.encode(buffer));
+      }
+    },
+  });
+}
+
+function createAntigravityFetch(
+  store: KeyStore,
+  config: KeyStoreConfig,
+  reloadFromDisk: () => void,
+  safeSaveStore: () => void,
+) {
+  return async (
+    input: string | URL | Request,
+    init?: RequestInit,
+    fallbackFetch: typeof fetch = fetch,
+  ): Promise<Response> => {
+    const urlString =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : (input as Request).url;
+
+    if (urlString.includes("generativelanguage.googleapis.com") || urlString.includes("antigravity")) {
+      const match = urlString.match(/\/models\/([^:]+):(\w+)/);
+      const rawModel = match ? match[1] : "";
+      const action = match ? match[2] : "streamGenerateContent";
+      const isStreaming = action === "streamGenerateContent" || urlString.includes("alt=sse");
+
+      const isAntigravityModel =
+        rawModel.startsWith("antigravity-") ||
+        rawModel in BASE_ANTIGRAVITY_MODELS ||
+        /claude|gpt-oss|gemini-3|gemini-pro-agent/i.test(rawModel);
+
+      reloadFromDisk();
+      const activeAntigravityKeys = getActiveKeys(store, "antigravity");
+
+      if (isAntigravityModel || activeAntigravityKeys.length > 0) {
+        if (init?.signal?.aborted) {
+          throw new DOMException("The operation was aborted.", "AbortError");
+        }
+        let attempts = 0;
+        let lastResponse: Response | null = null;
+        const maxAttempts = Math.max(1, activeAntigravityKeys.length);
+        while (attempts < maxAttempts) {
+          if (init?.signal?.aborted) {
+            throw new DOMException("The operation was aborted.", "AbortError");
+          }
+          attempts++;
+          const next = getNextKey(store, config, rawModel, "antigravity");
+          if (!next) break;
+
+          const authRes = await getOrRefreshAntigravityAccessToken(next.key.key);
+          if (!authRes) {
+            continue;
+          }
+
+          if (init?.signal?.aborted) {
+            throw new DOMException("The operation was aborted.", "AbortError");
+          }
+
+          const effectiveModel = rawModel.replace(/^antigravity-/, "");
+          const candidateModels = [effectiveModel];
+          if (
+            !effectiveModel.endsWith("-tiered") &&
+            (effectiveModel.includes("flash") || effectiveModel.includes("pro"))
+          ) {
+            candidateModels.push(`${effectiveModel}-tiered`);
+          } else if (effectiveModel.endsWith("-tiered")) {
+            candidateModels.push(effectiveModel.replace(/-tiered$/, ""));
+          }
+
+          let bodyStr = init?.body;
+          let parsedBody = typeof bodyStr === "string" ? JSON.parse(bodyStr) : bodyStr;
+
+          const headers = new Headers(init?.headers ?? {});
+          headers.set("Authorization", `Bearer ${authRes.accessToken}`);
+          headers.set(
+            "User-Agent",
+            `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Antigravity/1.18.3 Chrome/138.0.7204.235 Electron/37.3.1 Safari/537.36`,
+          );
+          headers.set("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1");
+          headers.set(
+            "Client-Metadata",
+            `{"ideType":"ANTIGRAVITY","platform":"WINDOWS","pluginType":"GEMINI"}`,
+          );
+          headers.delete("x-goog-api-key");
+          headers.delete("x-api-key");
+          headers.delete("x-goog-user-project");
+          const endpoints = [
+            "https://daily-cloudcode-pa.sandbox.googleapis.com",
+            "https://cloudcode-pa.googleapis.com",
+          ];
+
+          let gotRes: Response | null = null;
+          endpointLoop: for (const ep of endpoints) {
+            if (init?.signal?.aborted) {
+              throw new DOMException("The operation was aborted.", "AbortError");
+            }
+            for (const candidate of candidateModels) {
+              if (init?.signal?.aborted) {
+                throw new DOMException("The operation was aborted.", "AbortError");
+              }
+              const transformedUrl = `${ep}/v1internal:${action}${isStreaming ? "?alt=sse" : ""}`;
+              const wrappedBody = JSON.stringify({
+                project: authRes.projectId || "rising-fact-p41fc",
+                model: candidate,
+                request: parsedBody,
+                requestType: "agent",
+                userAgent: "antigravity",
+              });
+              try {
+                const r = await fetch(transformedUrl, {
+                  ...init,
+                  headers,
+                  body: wrappedBody,
+                });
+                if (r.ok) {
+                  gotRes = r;
+                  break endpointLoop;
+                }
+                if (r.status === 429) {
+                  gotRes = r;
+                }
+              } catch (netErr: any) {
+                if (netErr?.name === "AbortError" || init?.signal?.aborted) {
+                  throw netErr;
+                }
+                if (process.env.SUPEROC_DEBUG === "true") {
+                  console.warn(`[superoc] Endpoint ${ep} socket/network error:`, netErr);
+                }
+              }
+            }
+          }
+
+          if (gotRes) {
+            lastResponse = gotRes;
+          }
+
+          if (gotRes && gotRes.ok) {
+            if (isStreaming && gotRes.body) {
+              const transformedStream = gotRes.body.pipeThrough(createSseUnwrapTransform());
+              return new Response(transformedStream, {
+                status: gotRes.status,
+                statusText: gotRes.statusText,
+                headers: gotRes.headers,
+              });
+            }
+            return gotRes;
+          }
+
+          if (gotRes && gotRes.status === 429) {
+            recordRateLimit(store, next.key.id);
+            recordModelRateLimit(store, next.key.id, rawModel);
+            safeSaveStore();
+            continue;
+          }
+
+          if (gotRes) return gotRes;
+        }
+
+        if (isAntigravityModel) {
+          if (lastResponse) return lastResponse;
+          return new Response(
+            JSON.stringify({
+              error: {
+                code: 429,
+                message: "All Antigravity accounts are currently rate limited or exhausted.",
+                status: "RESOURCE_EXHAUSTED",
+              },
+            }),
+            { status: 429, headers: { "Content-Type": "application/json" } },
+          );
+        }
+      }
+    }
+
+    return (fallbackFetch || fetch)(input as any, init);
+  };
+}
+
+function installGlobalFetchInterceptor(fetchHandler: (input: any, init?: any, orig?: any) => Promise<Response>) {
+  if (!(globalThis as any).__superoc_fetch_installed) {
+    (globalThis as any).__superoc_fetch_installed = true;
+    const origFetch = globalThis.fetch;
+    (globalThis as any).fetch = async function (input: any, init?: any) {
+      return fetchHandler(input, init, origFetch);
+    };
+  }
+}
+
 export const SuperocPlugin: Plugin = async (input: PluginInput, options?: Record<string, unknown>) => {
   const client = input.client;
   const config: KeyStoreConfig = {
@@ -484,53 +717,6 @@ export const SuperocPlugin: Plugin = async (input: PluginInput, options?: Record
     await triggerRetry(sessionID, state, reason);
   };
 
-function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
-  const decoder = new TextDecoder();
-  const encoder = new TextEncoder();
-  let buffer = "";
-
-  return new TransformStream({
-    transform(chunk, controller) {
-      buffer += decoder.decode(chunk, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        if (line.startsWith("data:")) {
-          const jsonStr = line.slice(5).trim();
-          if (!jsonStr) {
-            controller.enqueue(encoder.encode(line + "\n"));
-            continue;
-          }
-          try {
-            const parsed = JSON.parse(jsonStr);
-            if (parsed.response !== undefined) {
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify(parsed.response)}\n`));
-              continue;
-            }
-          } catch {}
-        }
-        controller.enqueue(encoder.encode(line + "\n"));
-      }
-    },
-    flush(controller) {
-      if (buffer.length > 0) {
-        if (buffer.startsWith("data:")) {
-          const jsonStr = buffer.slice(5).trim();
-          try {
-            const parsed = JSON.parse(jsonStr);
-            if (parsed.response !== undefined) {
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify(parsed.response)}\n`));
-              return;
-            }
-          } catch {}
-        }
-        controller.enqueue(encoder.encode(buffer));
-      }
-    },
-  });
-}
-
   if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
     process.env.GOOGLE_GENERATIVE_AI_API_KEY = "antigravity-oauth";
   }
@@ -539,182 +725,8 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
   }
   syncOpencodeAuth();
 
-  const antigravityFetch = async (
-    input: string | URL | Request,
-    init?: RequestInit,
-    fallbackFetch: typeof fetch = fetch,
-  ): Promise<Response> => {
-    const urlString =
-      typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.toString()
-          : (input as Request).url;
-
-    if (urlString.includes("generativelanguage.googleapis.com") || urlString.includes("antigravity")) {
-      const match = urlString.match(/\/models\/([^:]+):(\w+)/);
-      const rawModel = match ? match[1] : "";
-      const action = match ? match[2] : "streamGenerateContent";
-      const isStreaming = action === "streamGenerateContent" || urlString.includes("alt=sse");
-
-      const isAntigravityModel =
-        rawModel.startsWith("antigravity-") ||
-        rawModel in BASE_ANTIGRAVITY_MODELS ||
-        /claude|gpt-oss|gemini-3|gemini-pro-agent/i.test(rawModel);
-
-      reloadFromDisk();
-      const activeAntigravityKeys = getActiveKeys(store, "antigravity");
-
-      if (isAntigravityModel || activeAntigravityKeys.length > 0) {
-        if (init?.signal?.aborted) {
-          throw new DOMException("The operation was aborted.", "AbortError");
-        }
-        let attempts = 0;
-        let lastResponse: Response | null = null;
-        const maxAttempts = Math.max(1, activeAntigravityKeys.length);
-        while (attempts < maxAttempts) {
-          if (init?.signal?.aborted) {
-            throw new DOMException("The operation was aborted.", "AbortError");
-          }
-          attempts++;
-          const next = getNextKey(store, config, rawModel, "antigravity");
-          if (!next) break;
-
-          const authRes = await getOrRefreshAntigravityAccessToken(next.key.key);
-          if (!authRes) {
-            continue;
-          }
-
-          if (init?.signal?.aborted) {
-            throw new DOMException("The operation was aborted.", "AbortError");
-          }
-
-          const effectiveModel = rawModel.replace(/^antigravity-/, "");
-          const candidateModels = [effectiveModel];
-          if (
-            !effectiveModel.endsWith("-tiered") &&
-            (effectiveModel.includes("flash") || effectiveModel.includes("pro"))
-          ) {
-            candidateModels.push(`${effectiveModel}-tiered`);
-          } else if (effectiveModel.endsWith("-tiered")) {
-            candidateModels.push(effectiveModel.replace(/-tiered$/, ""));
-          }
-
-          let bodyStr = init?.body;
-          let parsedBody = typeof bodyStr === "string" ? JSON.parse(bodyStr) : bodyStr;
-
-          const headers = new Headers(init?.headers ?? {});
-          headers.set("Authorization", `Bearer ${authRes.accessToken}`);
-          headers.set(
-            "User-Agent",
-            `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Antigravity/1.18.3 Chrome/138.0.7204.235 Electron/37.3.1 Safari/537.36`,
-          );
-          headers.set("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1");
-          headers.set(
-            "Client-Metadata",
-            `{"ideType":"ANTIGRAVITY","platform":"WINDOWS","pluginType":"GEMINI"}`,
-          );
-          headers.delete("x-goog-api-key");
-          headers.delete("x-api-key");
-          headers.delete("x-goog-user-project");
-          const endpoints = [
-            "https://daily-cloudcode-pa.sandbox.googleapis.com",
-            "https://cloudcode-pa.googleapis.com",
-          ];
-
-          let gotRes: Response | null = null;
-          endpointLoop: for (const ep of endpoints) {
-            if (init?.signal?.aborted) {
-              throw new DOMException("The operation was aborted.", "AbortError");
-            }
-            for (const candidate of candidateModels) {
-              if (init?.signal?.aborted) {
-                throw new DOMException("The operation was aborted.", "AbortError");
-              }
-              const transformedUrl = `${ep}/v1internal:${action}${isStreaming ? "?alt=sse" : ""}`;
-              const wrappedBody = JSON.stringify({
-                project: authRes.projectId || "rising-fact-p41fc",
-                model: candidate,
-                request: parsedBody,
-                requestType: "agent",
-                userAgent: "antigravity",
-              });
-              try {
-                const r = await fetch(transformedUrl, {
-                  ...init,
-                  headers,
-                  body: wrappedBody,
-                });
-                if (r.ok) {
-                  gotRes = r;
-                  break endpointLoop;
-                }
-                if (r.status === 429) {
-                  gotRes = r;
-                }
-              } catch (netErr: any) {
-                if (netErr?.name === "AbortError" || init?.signal?.aborted) {
-                  throw netErr;
-                }
-                if (process.env.SUPEROC_DEBUG === "true") {
-                  console.warn(`[superoc] Endpoint ${ep} socket/network error:`, netErr);
-                }
-              }
-            }
-          }
-
-          if (gotRes) {
-            lastResponse = gotRes;
-          }
-
-          if (gotRes && gotRes.ok) {
-            if (isStreaming && gotRes.body) {
-              const transformedStream = gotRes.body.pipeThrough(createSseUnwrapTransform());
-              return new Response(transformedStream, {
-                status: gotRes.status,
-                statusText: gotRes.statusText,
-                headers: gotRes.headers,
-              });
-            }
-            return gotRes;
-          }
-
-          if (gotRes && gotRes.status === 429) {
-            recordRateLimit(store, next.key.id);
-            recordModelRateLimit(store, next.key.id, rawModel);
-            safeSaveStore();
-            continue;
-          }
-
-          if (gotRes) return gotRes;
-        }
-
-        if (isAntigravityModel) {
-          if (lastResponse) return lastResponse;
-          return new Response(
-            JSON.stringify({
-              error: {
-                code: 429,
-                message: "All Antigravity accounts are currently rate limited or exhausted.",
-                status: "RESOURCE_EXHAUSTED",
-              },
-            }),
-            { status: 429, headers: { "Content-Type": "application/json" } },
-          );
-        }
-      }
-    }
-
-    return (fallbackFetch || fetch)(input as any, init);
-  };
-
-  if (!(globalThis as any).__superoc_fetch_installed) {
-    (globalThis as any).__superoc_fetch_installed = true;
-    const origFetch = globalThis.fetch;
-    (globalThis as any).fetch = async function (input: any, init?: any) {
-      return antigravityFetch(input, init, origFetch);
-    };
-  }
+  const antigravityFetch = createAntigravityFetch(store, config, reloadFromDisk, safeSaveStore);
+  installGlobalFetchInterceptor(antigravityFetch);
 
   const hooks: Hooks = {
     config: async (cfg: any) => {
@@ -1007,5 +1019,315 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
   return hooks;
 };
 
+export interface V2Context {
+  id?: string;
+  location?: { directory?: string; workspaceID?: string };
+  options?: Record<string, unknown>;
+  session?: {
+    hook?: (name: string, callback: (input: any) => Promise<void> | void, options?: any) => Promise<{ dispose: () => Promise<void> }>;
+    switchModel?: (input: { sessionID: string; model: { providerID: string; modelID: string } }) => Promise<void>;
+    prompt?: (input: any) => Promise<void>;
+    get?: (input: any) => Promise<any>;
+    [key: string]: any;
+  };
+  shell?: {
+    hook?: (name: string, callback: (input: any) => Promise<void> | void) => Promise<{ dispose: () => Promise<void> }>;
+    [key: string]: any;
+  };
+  provider?: {
+    transform?: (callback: (editor: any) => void) => Promise<{ dispose: () => Promise<void> }>;
+    list?: () => Promise<any>;
+    [key: string]: any;
+  };
+  model?: {
+    transform?: (callback: (editor: any) => void) => Promise<{ dispose: () => Promise<void> }>;
+    list?: () => Promise<any>;
+    [key: string]: any;
+  };
+  storage?: {
+    get?: (key: string) => Promise<any>;
+    set?: (key: string, value: any) => Promise<void>;
+    remove?: (key: string) => Promise<void>;
+  };
+  event?: {
+    subscribe?: (name: string, options?: any) => AsyncIterable<any>;
+  };
+  [key: string]: any;
+}
+
+export async function setupV2(context: V2Context): Promise<(() => Promise<void> | void) | void> {
+  const options = context.options ?? {};
+  const config: KeyStoreConfig = {
+    storePath: options.storePath as string | undefined,
+    rotationStrategy: isValidStrategy(options.rotationStrategy)
+      ? options.rotationStrategy
+      : "round-robin",
+  };
+
+  const store = loadStore(config) ?? getDefaultStore();
+  if (!store.fallbackChains) store.fallbackChains = { nvidia: [], google: [], antigravity: [] };
+
+  const sessions = new Map<string, SessionState>();
+
+  const reloadFromDisk = () => {
+    let fresh: KeyStore | null = null;
+    try {
+      fresh = loadStore(config);
+    } catch (err) {
+      console.debug("[superoc] Failed to reload store from disk:", err);
+      return;
+    }
+    if (fresh === null) return;
+    try {
+      store.keys = fresh.keys;
+      store.currentIndex = fresh.currentIndex;
+      store.rotationStrategy = fresh.rotationStrategy;
+      store.updatedAt = fresh.updatedAt;
+      store.lastUsedKeyId = fresh.lastUsedKeyId;
+      store.fallbackChains = {
+        nvidia: Array.isArray(fresh.fallbackChains?.nvidia) ? fresh.fallbackChains.nvidia : [],
+        google: Array.isArray(fresh.fallbackChains?.google) ? fresh.fallbackChains.google : [],
+        antigravity: Array.isArray(fresh.fallbackChains?.antigravity) ? fresh.fallbackChains.antigravity : [],
+      };
+      store.maxRateLimitFailures =
+        typeof fresh.maxRateLimitFailures === "number" &&
+        Number.isFinite(fresh.maxRateLimitFailures) &&
+        fresh.maxRateLimitFailures >= 1
+          ? fresh.maxRateLimitFailures
+          : getDefaultStore().maxRateLimitFailures;
+    } catch (err) {
+      console.debug("[superoc] Failed to apply reloaded store:", err);
+    }
+  };
+
+  const safeSaveStore = () => {
+    try {
+      saveStore(store, config);
+    } catch (err) {
+      console.error("[superoc] Failed to save store:", err);
+    }
+  };
+
+  for (const provider of PROVIDERS) {
+    const activeKeys = getActiveKeys(store, provider);
+    if (activeKeys.length === 0) {
+      const envKey = process.env[getEnvKeyName(provider)];
+      if (envKey) {
+        const existing = store.keys.find((k) => k.name === "env-default" && k.provider === provider);
+        if (!existing) {
+          addKey(store, "env-default", envKey, provider);
+          safeSaveStore();
+        }
+      }
+    }
+  }
+
+  const getState = (sessionID: string): SessionState => {
+    const existing = sessions.get(sessionID);
+    if (existing) return existing;
+    const next: SessionState = {
+      attemptIndex: 0,
+      inRetry: false,
+      aborting: false,
+      pendingRetryIndex: undefined,
+      lastUserMessageID: undefined,
+      activeChainKey: undefined,
+      activeChainModelId: undefined,
+      rateLimitCount: 0,
+      currentModelId: undefined,
+      lastFailedModelId: undefined,
+      lastErrorHandledAt: 0,
+      createdAt: Date.now(),
+      sessionProviderId: undefined,
+      lastUsedKeyId: undefined,
+    };
+    sessions.set(sessionID, next);
+    return next;
+  };
+
+  // Seed environment variables
+  if (!process.env.OPENCODE_ENABLE_EXA) {
+    process.env.OPENCODE_ENABLE_EXA = "1";
+  }
+  if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY = "antigravity-oauth";
+  }
+  if (!process.env.GEMINI_API_KEY) {
+    process.env.GEMINI_API_KEY = "antigravity-oauth";
+  }
+  syncOpencodeAuth();
+
+  // Install global fetch interceptor
+  const antigravityFetch = createAntigravityFetch(store, config, reloadFromDisk, safeSaveStore);
+  installGlobalFetchInterceptor(antigravityFetch);
+
+  // Shell hook in V2
+  if (context.shell?.hook) {
+    await context.shell.hook("create.before", async (input: any) => {
+      if (input?.env) {
+        input.env["OPENCODE_ENABLE_EXA"] = "1";
+        reloadFromDisk();
+        for (const provider of PROVIDERS) {
+          const envKeyName = getEnvKeyName(provider);
+          if (input.env[envKeyName] !== undefined || getActiveKeys(store, provider).length > 0) {
+            const next = getNextKey(store, config, undefined, provider);
+            if (next) {
+              input.env[envKeyName] = next.key.key;
+              safeSaveStore();
+            }
+          }
+        }
+      }
+    });
+  }
+
+  // Session model.request hook in V2: inject rotated auth headers
+  if (context.session?.hook) {
+    await context.session.hook("model.request", async (input: any) => {
+      const provider = detectProviderForRequest({
+        provider: { info: { id: input.model?.providerID } },
+        model: { providerID: input.model?.providerID, api: input.model?.modelID },
+      });
+      if (!provider) return;
+
+      reloadFromDisk();
+      const prevKeyId = store.lastUsedKeyId;
+      const modelId = input.model?.modelID;
+      const next = getNextKey(store, config, modelId, provider);
+      if (next) {
+        if (provider === "antigravity") {
+          const authRes = await getOrRefreshAntigravityAccessToken(next.key.key);
+          if (authRes) {
+            const headers = getAntigravityHeaders(authRes.accessToken, authRes.projectId);
+            input.headers = Object.assign(input.headers || {}, headers);
+          }
+        } else {
+          const headers = getProviderHeaders(provider, next.key.key);
+          input.headers = Object.assign(input.headers || {}, headers);
+        }
+        if (prevKeyId && prevKeyId !== next.key.id) {
+          resetRateLimit(store, prevKeyId);
+        }
+        safeSaveStore();
+      }
+      if (input.sessionID) {
+        const state = getState(input.sessionID);
+        state.currentModelId = modelId;
+        state.sessionProviderId = provider;
+        if (next) state.lastUsedKeyId = next.key.id;
+      }
+    });
+
+    // Session http.response hook in V2: monitor 429 rate limits
+    await context.session.hook("http.response", async (input: any) => {
+      if (input.response?.status === 429) {
+        const state = input.sessionID ? sessions.get(input.sessionID) : undefined;
+        const errorKeyId = state?.lastUsedKeyId ?? store.lastUsedKeyId;
+        reloadFromDisk();
+        if (errorKeyId) {
+          recordRateLimit(store, errorKeyId);
+          const modelForBlacklist = state?.currentModelId;
+          if (modelForBlacklist) {
+            recordModelRateLimit(store, errorKeyId, modelForBlacklist);
+          }
+          if (state) state.lastFailedModelId = modelForBlacklist;
+        }
+        safeSaveStore();
+      }
+    });
+
+    // Session retry hook in V2: fallback model switching
+    await context.session.hook("retry", async (input: any) => {
+      const sessionID = input.sessionID;
+      if (!sessionID) return;
+      const state = getState(sessionID);
+      const provider = (state.sessionProviderId as ProviderId) ?? "nvidia";
+      const chain = store.fallbackChains[provider] || [];
+      if (chain.length < 2) return;
+
+      let nextIndex = (state.attemptIndex + 1) % chain.length;
+      const target = chain[nextIndex];
+      if (target && context.session?.switchModel) {
+        state.attemptIndex = nextIndex;
+        state.currentModelId = target.id;
+        try {
+          await context.session.switchModel({
+            sessionID,
+            model: { providerID: state.sessionProviderId ?? provider, modelID: target.id },
+          });
+        } catch (err) {
+          console.debug("[superoc] switchModel failed:", err);
+        }
+      }
+    });
+  }
+
+  // Provider & Model transform in V2
+  if (context.provider?.transform) {
+    await context.provider.transform((editor: any) => {
+      const existing = editor.get?.("antigravity");
+      if (!existing && editor.add) {
+        editor.add({
+          info: {
+            id: "antigravity",
+            name: "Antigravity",
+            package: "aisdk:@ai-sdk/google",
+            settings: {
+              baseURL: "https://generativelanguage.googleapis.com/v1beta",
+            },
+          },
+          models: [],
+        });
+      }
+    });
+  }
+
+  if (context.model?.transform) {
+    await context.model.transform((editor: any) => {
+      for (const [id, def] of Object.entries(BASE_ANTIGRAVITY_MODELS)) {
+        if (!editor.get?.("antigravity", id) && editor.update) {
+          editor.update("antigravity", id, (draft: any) => {
+            Object.assign(draft, {
+              name: def.name,
+              limit: def.limit,
+              capabilities: {
+                tools: true,
+                input: ["text", "image", "pdf"],
+                output: ["text"],
+              },
+            });
+          });
+        }
+      }
+    });
+  }
+
+  // Query live Antigravity models in background
+  reloadFromDisk();
+  const activeKeys = getActiveKeys(store, "antigravity");
+  if (activeKeys.length > 0) {
+    getOrRefreshAntigravityAccessToken(activeKeys[0].key)
+      .then(async (auth) => {
+        if (auth) {
+          try {
+            await fetchLiveAntigravityModels(auth.accessToken, auth.projectId);
+          } catch {}
+        }
+      })
+      .catch(() => {});
+  }
+
+  return () => {
+    sessions.clear();
+  };
+}
+
+export const SuperocPluginV2 = {
+  id: "superoc",
+  setup: setupV2,
+  server: SuperocPlugin,
+};
+
 export const NimSuperPlugin = SuperocPlugin;
-export default SuperocPlugin;
+export { SuperocPlugin as server };
+export default SuperocPluginV2;
