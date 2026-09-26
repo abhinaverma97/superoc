@@ -28,6 +28,7 @@ import {
   fetchLiveAntigravityModels,
 } from "./antigravity.js";
 import { BASE_ANTIGRAVITY_MODELS, syncOpencodeModels, syncOpencodeAuth } from "./opencode-sync.js";
+import { startAntigravityProxy, PROXY_BASE_URL, PROXY_PORT } from "./proxy.js";
 
 const PROVIDERS: ProviderId[] = ["nvidia", "google", "antigravity"];
 const NIM_BASE_URL = "https://integrate.api.nvidia.com";
@@ -106,7 +107,7 @@ function findChainIndex(chain: FallbackModel[], model: { providerID: string; mod
   return chain.findIndex((entry) => entry.id === model.modelID);
 }
 
-function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
+export function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
   let buffer = "";
@@ -153,7 +154,7 @@ function createSseUnwrapTransform(): TransformStream<Uint8Array, Uint8Array> {
   });
 }
 
-function createAntigravityFetch(
+export function createAntigravityFetch(
   store: KeyStore,
   config: KeyStoreConfig,
   reloadFromDisk: () => void,
@@ -237,6 +238,10 @@ function createAntigravityFetch(
           headers.delete("x-goog-api-key");
           headers.delete("x-api-key");
           headers.delete("x-goog-user-project");
+          headers.delete("host");
+          headers.delete("content-length");
+          headers.delete("connection");
+          headers.delete("transfer-encoding");
           const endpoints = [
             "https://daily-cloudcode-pa.sandbox.googleapis.com",
             "https://cloudcode-pa.googleapis.com",
@@ -329,7 +334,7 @@ function createAntigravityFetch(
   };
 }
 
-function installGlobalFetchInterceptor(fetchHandler: (input: any, init?: any, orig?: any) => Promise<Response>) {
+export function installGlobalFetchInterceptor(fetchHandler: (input: any, init?: any, orig?: any) => Promise<Response>) {
   if (!(globalThis as any).__superoc_fetch_installed) {
     (globalThis as any).__superoc_fetch_installed = true;
     const origFetch = globalThis.fetch;
@@ -727,6 +732,7 @@ export const SuperocPlugin: Plugin = async (input: PluginInput, options?: Record
 
   const antigravityFetch = createAntigravityFetch(store, config, reloadFromDisk, safeSaveStore);
   installGlobalFetchInterceptor(antigravityFetch);
+  startAntigravityProxy(antigravityFetch);
 
   const hooks: Hooks = {
     config: async (cfg: any) => {
@@ -1157,9 +1163,10 @@ export async function setupV2(context: V2Context): Promise<(() => Promise<void> 
   }
   syncOpencodeAuth();
 
-  // Install global fetch interceptor
+  // Install global fetch interceptor & local proxy server
   const antigravityFetch = createAntigravityFetch(store, config, reloadFromDisk, safeSaveStore);
   installGlobalFetchInterceptor(antigravityFetch);
+  startAntigravityProxy(antigravityFetch);
 
   // Shell hook in V2
   if (context.shell?.hook) {
@@ -1181,8 +1188,18 @@ export async function setupV2(context: V2Context): Promise<(() => Promise<void> 
     });
   }
 
-  // Session model.request hook in V2: inject rotated auth headers
+  // Session hooks in V2: http.request redirect and model.request auth injection
   if (context.session?.hook) {
+    await context.session.hook("http.request", async (input: any) => {
+      if (input.request?.url && input.request.url.includes("generativelanguage.googleapis.com")) {
+        const newUrl = input.request.url.replace(
+          "https://generativelanguage.googleapis.com",
+          `http://127.0.0.1:${PROXY_PORT}`,
+        );
+        input.request = new Request(newUrl, input.request);
+      }
+    });
+
     await context.session.hook("model.request", async (input: any) => {
       const provider = detectProviderForRequest({
         provider: { info: { id: input.model?.providerID } },
@@ -1273,7 +1290,7 @@ export async function setupV2(context: V2Context): Promise<(() => Promise<void> 
             name: "Antigravity",
             package: "aisdk:@ai-sdk/google",
             settings: {
-              baseURL: "https://generativelanguage.googleapis.com/v1beta",
+              baseURL: PROXY_BASE_URL,
             },
           },
           models: [],

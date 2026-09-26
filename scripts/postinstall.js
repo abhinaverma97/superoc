@@ -210,7 +210,7 @@ async function install() {
     name: "Antigravity",
     package: "aisdk:@ai-sdk/google",
     settings: {
-      baseURL: "https://generativelanguage.googleapis.com/v1beta",
+      baseURL: "http://127.0.0.1:51121/v1beta",
     },
     models: BASE_ANTIGRAVITY_MODELS,
   };

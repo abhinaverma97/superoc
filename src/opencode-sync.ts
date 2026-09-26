@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import type { FallbackModel } from "./types.js";
+import { PROXY_BASE_URL } from "./proxy.js";
 
 const DEFAULT_MODALITIES = {
   input: ["text", "image", "pdf"],
@@ -202,7 +203,7 @@ export function syncOpencodeModels(customModels?: Array<{ id: string; name: stri
       name: "Antigravity",
       package: "aisdk:@ai-sdk/google",
       settings: {
-        baseURL: "https://generativelanguage.googleapis.com/v1beta",
+        baseURL: PROXY_BASE_URL,
       },
       models: modelsMap,
     };
